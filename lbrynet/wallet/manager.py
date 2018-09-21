@@ -8,9 +8,10 @@ from torba.basemanager import BaseWalletManager
 from lbryschema.claim import ClaimDict
 
 from .ledger import MainNetLedger
-from .account import generate_certificate
+from .account import generate_certificate, Account as LBCAccount
 from .transaction import Transaction
 from .database import WalletDatabase
+
 
 log = logging.getLogger(__name__)
 
@@ -54,8 +55,7 @@ class LbryWalletManager(BaseWalletManager):
 
     @property
     def use_encryption(self):
-        # TODO: implement this
-        return False
+        return self.default_account.encrypted_on_disk
 
     @property
     def is_first_run(self):
@@ -63,10 +63,57 @@ class LbryWalletManager(BaseWalletManager):
 
     @property
     def is_wallet_unlocked(self):
-        return True
+        return not self.default_account.encrypted
 
     def check_locked(self):
-        return defer.succeed(False)
+        return defer.succeed(self.default_account.encrypted)
+
+    def get_account_or_error(self, account_id: str, lbc_only=True):
+        if not account_id:
+            if lbc_only and not isinstance(self.default_account, LBCAccount):
+                raise ValueError(
+                    "Found '{}', but it's an {} ledger account. A LBC Account is needed."
+                        .format(account_id, self.default_account.ledger.symbol)
+                )
+            return self.default_account
+        for account in self.default_wallet.accounts:
+            if account.id == account_id:
+                if lbc_only and not isinstance(account, LBCAccount):
+                    raise ValueError(
+                        "Found '{}', but it's an {} ledger account. A LBC Account is needed."
+                        .format(account_id, account.ledger.symbol)
+                    )
+                return account
+        raise ValueError("Couldn't find account: {}.".format(account_id))
+
+    def decrypt_account(self, account_id):
+        account = self.get_account_or_error(account_id, lbc_only=False)
+        assert account.password is not None, "wallet is not unlocked"
+        assert not account.encrypted, "wallet is not unlocked"
+        account.encrypted_on_disk = False
+        self.save()
+        return defer.succeed(not account.encrypted and not account.encrypted_on_disk)
+
+    def encrypt_account(self, password, account_id):
+        account = self.get_account_or_error(account_id, lbc_only=False)
+        assert not account.encrypted, "wallet is already encrypted"
+        account.encrypt(password)
+        account.encrypted_on_disk = True
+        self.save()
+        return defer.succeed(account.encrypted and account.encrypted_on_disk)
+
+    def unlock_account(self, password, account_id):
+        account = self.get_account_or_error(account_id, lbc_only=False)
+        assert account.encrypted, "wallet is not locked"
+        account.decrypt(password)
+        return defer.succeed(not account.encrypted)
+
+    def lock_account(self, account_id):
+        account = self.get_account_or_error(account_id, lbc_only=False)
+        assert account.password is not None, "wallet is already locked"
+        assert not account.encrypted and account.encrypted_on_disk, "wallet is not encrypted"
+        account.encrypt(account.password)
+        return defer.succeed(account.encrypted)
 
     @staticmethod
     def migrate_lbryum_to_torba(path):

@@ -259,6 +259,15 @@ ADJUSTABLE_SETTINGS = {
     'known_dht_nodes': (list, DEFAULT_DHT_NODES, server_list, server_list_reverse),
     'lbryum_wallet_dir': (str, default_lbryum_dir),
     'max_connections_per_stream': (int, 5),
+
+    # TODO: make the maximum space usage available system-dependant
+    # Currently the default maximum space that the daemon can use is 512MB.
+    # By default, there is mo space management being used. Due to how hard it
+    # is to infer what the user wants to allocate without being interactive,
+    # it's better to let the user figure it out on their own.
+    'max_space_usage': (int, 536870912),  # 512MB available as default
+    'disable_space_management': (bool, True),  # Space management is off by default
+
     'seek_head_blob_first': (bool, True),
     # TODO: writing json on the cmd line is a pain, come up with a nicer
     # parser for this data structure. maybe 'USD:25'

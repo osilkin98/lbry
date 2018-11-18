@@ -459,6 +459,9 @@ def download_sd_blob(blob_hash, blob_manager, peer_finder, rate_limiter, payment
     mirror.start()
     sd_blob = yield downloader.download()
     mirror.stop()
+
+    # The following to do is only applicable when total filesize is added to the SD
+    # TODO: If the file being downloaded will exceed the memory limit, handle it here
     sd_reader = BlobStreamDescriptorReader(sd_blob)
     sd_info = yield sd_reader.get_info()
     try:

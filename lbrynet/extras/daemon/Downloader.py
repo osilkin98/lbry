@@ -191,7 +191,20 @@ class GetStream:
 
     @defer.inlineCallbacks
     def _download(self, sd_blob, name, key_fee, txid, nout, file_name=None):
+        """
+
+        :param sd_blob:
+        :param name:
+        :param key_fee:
+        :param txid:
+        :param nout:
+        :param file_name:
+        :return:
+        """
+        # This creates a SD downloader from the Downloader factories
         self.downloader = yield self._create_downloader(sd_blob, file_name=file_name)
+
+        # Pays the fee in order to download the content, if any
         yield self.pay_key_fee(key_fee, name)
         yield self.storage.save_content_claim(self.downloader.stream_hash, "%s:%i" % (txid, nout))
         log.info("Downloading lbry://%s (%s) --> %s", name, self.sd_hash[:6], self.download_path)

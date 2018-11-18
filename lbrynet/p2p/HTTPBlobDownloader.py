@@ -121,6 +121,12 @@ class HTTPBlobDownloader:
 
     @defer.inlineCallbacks
     def _download_blob(self, blob):
+        """ Given a `BlobFile` object, attempt to download the given
+        blob from any of the given mirrors. up to self.max_failures times.
+
+        :param blob:
+        :return:
+        """
         for _ in range(self.max_failures):
             writer, finished_deferred = blob.open_for_writing('mirror')
             self.writers.append(writer)

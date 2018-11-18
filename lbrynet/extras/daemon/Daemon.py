@@ -17,6 +17,7 @@ from twisted.python.failure import Failure
 from torba.client.baseaccount import SingleKey, HierarchicalDeterministic
 
 from lbrynet import conf, utils, __version__
+# from lbrynet.blob.client.EncryptedFileDownloader import EncryptedFileDownloader
 from lbrynet.dht.error import TimeoutError
 from lbrynet.extras import system_info
 from lbrynet.extras.reflector import reupload
@@ -343,6 +344,7 @@ class Daemon(AuthJSONRPCServer):
         If it already exists in the file manager, return the existing lbry file
         """
 
+
         @defer.inlineCallbacks
         def _download_finished(download_id, name, claim_dict):
             report = yield self._get_stream_analytics_report(claim_dict)
@@ -532,15 +534,21 @@ class Daemon(AuthJSONRPCServer):
 
     @defer.inlineCallbacks
     def _get_lbry_file_dict(self, lbry_file):
+
         key = hexlify(lbry_file.key) if lbry_file.key else None
         full_path = os.path.join(lbry_file.download_directory, lbry_file.file_name)
         mime_type = mimetypes.guess_type(full_path)[0]
+
+        # Gets the amount of bytes taken up by the file
+        # This is run after the file was already downloaded
         if os.path.isfile(full_path):
             with open(full_path) as written_file:
                 written_file.seek(0, os.SEEK_END)
                 written_bytes = written_file.tell()
         else:
             written_bytes = 0
+
+        log.debug("File at ~/Downloads/%s wrote %d bytes", lbry_file.file_name, written_bytes)
 
         size = yield lbry_file.get_total_bytes()
         file_status = yield lbry_file.status()
@@ -579,6 +587,15 @@ class Daemon(AuthJSONRPCServer):
 
     @defer.inlineCallbacks
     def _get_lbry_file(self, search_by, val, return_json=False):
+        """ Searches through the daemon's file manager to retrieve a file with the
+        specified values
+
+        :param str search_by: The file characteristics to be searching
+        :param val: The value of the characteristic we're looking for
+        :param return_json: Whether or not the file should be returned as a
+            string indexed dict.
+        :return:
+        """
         lbry_file = None
         if search_by in FileID:
             for l_f in self.file_manager.lbry_files:
@@ -1769,6 +1786,7 @@ class Daemon(AuthJSONRPCServer):
     @requires(WALLET_COMPONENT, EXCHANGE_RATE_MANAGER_COMPONENT, BLOB_COMPONENT,
               RATE_LIMITER_COMPONENT, PAYMENT_RATE_COMPONENT, DATABASE_COMPONENT,
               conditions=[WALLET_IS_UNLOCKED])
+
     async def jsonrpc_get(self, uri, file_name=None, timeout=None):
         """
         Download stream from a LBRY name.
@@ -1836,6 +1854,8 @@ class Daemon(AuthJSONRPCServer):
             await d2f(self.streams[sd_hash].data_downloading_deferred)
 
         lbry_file = await d2f(self._get_lbry_file(FileID.SD_HASH, sd_hash, return_json=False))
+
+        log.info("lbry_file is of type %s", type(lbry_file))
 
         if lbry_file:
             if not os.path.isfile(os.path.join(lbry_file.download_directory, lbry_file.file_name)):

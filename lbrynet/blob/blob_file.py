@@ -17,7 +17,7 @@ blobhash_length = get_lbry_hash_obj().digest_size * 2
 
 
 def is_valid_hashcharacter(char):
-    return char in "0123456789abcdef"
+    return 16 > int(char, 16) >= 0
 
 
 def is_valid_blobhash(blobhash):
@@ -28,7 +28,7 @@ def is_valid_blobhash(blobhash):
 
     @return: True/False
     """
-    return len(blobhash) == blobhash_length and all(is_valid_hashcharacter(l) for l in blobhash)
+    return len(blobhash) == blobhash_length and all(16 > int(l, 16) >= 0 for l in blobhash)
 
 
 class BlobFile:

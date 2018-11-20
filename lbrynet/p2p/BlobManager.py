@@ -36,15 +36,15 @@ class DiskBlobManager:
     def stop(self):
         return defer.succeed(True)
 
-    def get_blob(self, blob_hash, length=None):
+    def get_blob(self, blob_hash: str, length: int = None) -> defer.Deferred:
         """Return a blob identified by blob_hash, which may be a new blob or a
         blob that is already on the hard disk
 
-        :param str blob_hash: String representing the desired blob's hash
+        :param blob_hash: String representing the desired blob's hash
         :param length: Length of the blob to download. If None is specified, then
           the blob is assumed to already be saved in the `self.blobs` dict.
         :raises TypeError: If the blob isn't saved in `self.blobs` and `length` is
-          passed in as a non-`int` type (`None` by default)
+          passed in as a non-`int` type.
         """
         if length is not None and not isinstance(length, int):
             # Shouldn't this be replaced with TypeError
@@ -56,7 +56,7 @@ class DiskBlobManager:
     def get_blob_creator(self):
         return self.blob_creator_type(self.blob_dir)
 
-    def _make_new_blob(self, blob_hash, length=None):
+    def _make_new_blob(self, blob_hash: str, length: int = None) -> defer.Deferred:
         log.debug('Making a new blob for %s', blob_hash)
         blob = BlobFile(self.blob_dir, blob_hash, length)
         self.blobs[blob_hash] = blob
@@ -127,7 +127,7 @@ class DiskBlobManager:
     @defer.inlineCallbacks
     def _completed_blobs(self, blobhashes_to_check):
         """Returns of the blobhashes_to_check, which are valid"""
-        # This iterative method might not be the best since get_blob raises TypeError
+        # This iterative method might not be the best since get_blob can raise TypeError
         blobs = yield defer.DeferredList([self.get_blob(b) for b in blobhashes_to_check])
         blob_hashes = [b.blob_hash for success, b in blobs if success and b.verified]
         defer.returnValue(blob_hashes)

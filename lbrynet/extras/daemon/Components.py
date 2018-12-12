@@ -94,6 +94,23 @@ class ConfigSettings:
             return conf.settings['BLOBFILES_DIR']
 
     @staticmethod
+    def get_comments_dir():
+        if conf.settings['COMMENTS_DIR'] == 'comments':
+            return os.path.join(GCS('data_dir'), 'comments')
+        else:
+            log.info(f"Storing comments in '{conf.settings['COMMENTS_DIR']}' instead of default")
+            return conf.settings['COMMENTS_DIR']
+
+    @staticmethod
+    def get_comment_server() -> str:
+        """ Gets current comment server address.
+
+        :return: location of the comment server in the form `http://address:port`
+        """
+        return conf.settings['COMMENT_SERVER']
+
+
+    @staticmethod
     def get_node_id():
         return conf.settings.node_id
 

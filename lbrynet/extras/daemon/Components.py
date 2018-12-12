@@ -53,6 +53,7 @@ UPNP_COMPONENT = "upnp"
 EXCHANGE_RATE_MANAGER_COMPONENT = "exchange_rate_manager"
 RATE_LIMITER_COMPONENT = "rate_limiter"
 PAYMENT_RATE_COMPONENT = "payment_rate_manager"
+COMMENT_MANAGER_COMPONENT = "comment_manager"
 
 
 def from_future(coroutine: asyncio.coroutine) -> defer.Deferred:

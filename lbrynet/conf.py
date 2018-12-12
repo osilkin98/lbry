@@ -207,6 +207,7 @@ FIXED_SETTINGS = {
     'API_ADDRESS': 'lbryapi',
     'APP_NAME': APP_NAME,
     'BLOBFILES_DIR': 'blobfiles',
+    'COMMENTS_DIR': 'comments',
     'COMMENT_SERVER': f"http://{COMMENT_SERVER['ip']}:{COMMENT_SERVER['port']}",
     'CRYPTSD_FILE_EXTENSION': '.cryptsd',
     'CURRENCIES': {

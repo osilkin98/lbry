@@ -38,9 +38,7 @@ class MetadataServer:
 
     @classmethod
     def request_id(cls) -> int:
-        """ Increments the ID by 1 and returns the previous """
-        cls._request_id += 1
-        return cls._request_id - 1
+        return cls._request_id
 
     @classmethod
     def _make_request_body(cls, method: str, params: dict = None) -> dict:
@@ -55,11 +53,12 @@ class MetadataServer:
         """
         body = {
             'jsonrpc': '2.0',
-            'id': cls.request_id(),
+            'id': cls._request_id,
             'method': method,
         }
         if params is not None:
             body['params'] = params
+        cls._request_id += 1
         return body
 
     @property

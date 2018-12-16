@@ -19,14 +19,18 @@ class MetadataServer:
     _request_id: int = 1
     _headers = {'Content-Type': 'application/json'}
 
-    def __init__(self, server_url: str = None):
+    def __init__(self, server_url: str = None, **kwargs):
         """
         :param server_url: Location of the server. Note that in the future
           this will be multiple, however for now it's just the one.
         """
         self._server_url: str = server_url
         self._server_info: dict = {'last_updated': datetime.datetime.now(), 'status': None}
-        self._is_connected: bool = False
+        self._is_connected: bool = self._update_server_status()
+
+    @property
+    def headers(self):
+        return self.headers
 
     @property
     def is_connected(self) -> bool:
@@ -71,34 +75,42 @@ class MetadataServer:
         """
         return self._server_info['status']
 
-    def _update_server_status(self) -> None:
+    def update_server_status(self) -> bool:
+        """ Tries to get the server's current status
+        :return: True if the request succeeded
+        """
         response = self.make_request('status')
         self._server_info['last_updated'] = datetime.datetime.now()
+        if response is None:
+            return False
         self._server_info['status'] = None if 'error' in response else response['result']
+        return True
 
-    def make_request(self, method: str, params: dict = None) -> dict:
+    def make_request(self, method: str, params: dict = None,
+                     url: str = None, **kwargs) -> Union[dict, None]:
         """ Asynchronously makes a request to the metadata server using the
         incremented ID, as well as the given method and parameters.
 
         Note - The API's methods and parameters are documented online at [https://ocornoc.github.io/lbry-comments]
 
-        :param url: URL of the specific server the request will be amade to
+        :param url: URL of the specific server the request will be made to
         :param method: API method to call from the comments server.
         :param params: Parameters for the given method.
         :return: A `dict` of the JSON response. If the request was normal then
           it will contain a 'result' field, and 'error' if otherwise
         """
-        headers = {'Content-Type': 'application/json'}
-        body = {'jsonrpc': '2.0',
-                'method': method,
-                'id': self.request_id}
-
-        if params is not None:
-            body['params'] = params
+        url = self._server_url if url is None else url
+        headers, body = self._headers, self._make_request_body(method, params=params)
 
         with requests.Session() as sesh:
-            response = sesh.post(self._server_url, headers=headers, json=body)
-
+            try:
+                log.debug("Sending POST request to '%s' for method '%s'", url, method)
+                response = sesh.post(url, headers=headers, json=body)
+                self._is_connected = True
+            except requests.exceptions.ConnectionError:
+                self._is_connected = False
+                log.error("Failed to connect to '%s'", self._server_url)
+                return None
         if response.status_code != 200:
             raise requests.HTTPError()
         result = response.json()

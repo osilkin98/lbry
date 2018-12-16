@@ -2,12 +2,18 @@
 
 class MetadataServerException(Exception):
     """ Base Exception to handle errors returned from the server """
+
+    def __str__(self) -> str:
+        return str(self.response)
+
     def __init__(self, *args: object, **kwargs: dict) -> None:
         response: dict = kwargs.pop('result')
         self.request_id = response['id']
         self.code = response['error']['code']
         self.message = response['error']['message'] if 'message' in response['error'] else None
+        self.response = response
         super().__init__(*args)
+
 
 
 class GenericServerError(MetadataServerException):

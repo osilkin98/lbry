@@ -14,19 +14,23 @@ class MetadataServer:
         things such as likes or dislikes, and more importantly,
         the comments.
     """
-    _request_id = 0
+    _request_id: int = 0
 
     def __init__(self, server_url: str = None):
         """
         :param server_url: Location of the server. Note that in the future
           this will be multiple, however for now it's just the one.
         """
-        self._server_url = server_url
-        self._server_info = {'last_updated': datetime.datetime.now(), 'status': None}
-        self._is_connected = False
+        self._server_url: str = server_url
+        self._server_info: dict = {'last_updated': datetime.datetime.now(), 'status': None}
+        self._is_connected: bool = False
 
     @property
-    def request_id(self):
+    def is_connected(self) -> bool:
+        return self._is_connected
+
+    @property
+    def request_id(self) -> int:
         self._request_id += 1
         return self._request_id
 
@@ -43,12 +47,12 @@ class MetadataServer:
         """
         return self._server_info['status']
 
-    def _update_server_status(self):
-        response = self._make_request('status')
+    def _update_server_status(self) -> None:
+        response = self.make_request('status')
         self._server_info['last_updated'] = datetime.datetime.now()
         self._server_info['status'] = None if 'error' in response else response['result']
 
-    def _make_request(self, method: str, params: dict = None):
+    def make_request(self, method: str, params: dict = None) -> dict:
         """ Asynchronously makes a request to the metadata server using the
         incremented ID, as well as the given method and parameters.
 
@@ -112,7 +116,7 @@ class MetadataServer:
 
 
     @classmethod
-    async def _make_request(cls, url, method: str, params: dict = None):
+    async def make_request(cls, url, method: str, params: dict = None):
         """ Asynchronously makes a request to the metadata server using the
         incremented ID, as well as the given method and parameters.
 

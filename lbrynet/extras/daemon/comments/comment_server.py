@@ -1,9 +1,11 @@
 import requests
 import datetime
 from typing import Union
-
+import logging
 from lbrynet.extras.daemon.comments.exceptions import GenericServerError
 from lbrynet.extras.daemon.comments.exceptions import MetadataExceptions
+
+log = logging.getLogger(__name__)
 
 
 class MetadataServer:

@@ -76,9 +76,16 @@ class MetadataServer:
             response = sesh.post(self._server_url, headers=headers, json=body)
 
         if response.status_code != 200:
-            return {'error': {'text': response.text,
-                              'status_code': response.status_code}}
-        return response.json()
+            raise requests.HTTPError()
+
+        result = response.json()
+        if 'error' in result:
+            code = result['error']['code']
+            raise MetadataExceptions.get(code, GenericServerError)(result=result)
+
+        return result
+
+
 
 
 ''' ASYNC STUFF: Let's not use this until we have the normal sync version built

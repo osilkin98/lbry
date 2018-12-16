@@ -16,7 +16,8 @@ class MetadataServer:
         things such as likes or dislikes, and more importantly,
         the comments.
     """
-    _request_id: int = 0
+    _request_id: int = 1
+    _headers = {'Content-Type': 'application/json'}
 
     def __init__(self, server_url: str = None):
         """
@@ -31,10 +32,31 @@ class MetadataServer:
     def is_connected(self) -> bool:
         return self._is_connected
 
-    @property
-    def request_id(self) -> int:
-        self._request_id += 1
-        return self._request_id
+    @classmethod
+    def request_id(cls) -> int:
+        """ Increments the ID by 1 and returns the previous """
+        cls._request_id += 1
+        return cls._request_id - 1
+
+    @classmethod
+    def _make_request_body(cls, method: str, params: dict = None) -> dict:
+        """ Creates a body for an HTTP request to the MetadataServer as
+          documented. This method increments the request ID of the entire
+          class after it generates the body.
+
+        :param method: The API method to call from the server
+        :param params: The extra parameters for said method. If the server
+          doesn't need them, then they don't get used
+        :return: The body of the request
+        """
+        body = {
+            'jsonrpc': '2.0',
+            'id': cls.request_id(),
+            'method': method,
+        }
+        if params is not None:
+            body['params'] = params
+        return body
 
     @property
     def server_url(self) -> str:
@@ -79,15 +101,12 @@ class MetadataServer:
 
         if response.status_code != 200:
             raise requests.HTTPError()
-
         result = response.json()
         if 'error' in result:
             code = result['error']['code']
             raise MetadataExceptions.get(code, GenericServerError)(result=result)
 
         return result
-
-
 
 
 ''' ASYNC STUFF: Let's not use this until we have the normal sync version built

@@ -1,7 +1,9 @@
 import requests
 import datetime
 from typing import Union
-import lbrynet.conf
+
+from lbrynet.extras.daemon.comments.exceptions import GenericServerError
+from lbrynet.extras.daemon.comments.exceptions import MetadataExceptions
 
 
 class MetadataServer:

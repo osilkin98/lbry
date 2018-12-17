@@ -160,7 +160,7 @@ class ClaimMetadataAPI:
 
 
     def ping(self) -> dict:
-        return self._server.make_request("ping")['result']
+        return self._server.make_request("ping")
 
     def get_claim_data(self, uri: str) -> dict:
         """ Returns the data associated with a claim.

@@ -4,6 +4,12 @@ from typing import Union
 import logging
 from lbrynet.extras.daemon.comments.exceptions import GenericServerError
 from lbrynet.extras.daemon.comments.exceptions import MetadataExceptions
+from lbrynet.extras.daemon.comments.exceptions import MetadataServerException
+from lbrynet.extras.daemon.comments.exceptions import InvalidParamsError
+from lbrynet.extras.daemon.comments.exceptions import InvalidClaimUriError
+from lbrynet.extras.daemon.comments.exceptions import InternalMetadataServerError
+from lbrynet.extras.daemon.comments.exceptions import UnknownMetadataServerError
+
 
 log = logging.getLogger(__name__)
 
@@ -95,6 +101,12 @@ class MetadataServer:
         :param url: URL of the specific server the request will be made to
         :param method: API method to call from the comments server.
         :param params: Parameters for the given method.
+        :raises InternalMetadataServerError: if something internally breaks
+        :raises InvalidParamsError: if the parameters don't match the server
+        :raises InvalidClaimUriError: if the wrong URI is passed in
+        :raises UnknownMetadataServerError: if we hit a snag and don't know what happened
+        :raises GenericServerError: if we snag a generic JSON-RPC error that
+          wasn't documented by the API but is in the standard
         :return: A `dict` of the JSON response. If the request was normal then
           it will contain a 'result' field, and 'error' if otherwise
         """

@@ -36,7 +36,7 @@ class MetadataServer:
 
     @property
     def headers(self):
-        return self.headers
+        return self._headers
 
     @property
     def is_connected(self) -> bool:
@@ -129,7 +129,7 @@ class MetadataServer:
         result = response.json()
         if 'error' in result:  # JSON-RPC errors aren't critical since HTTP status is 200
             code = result['error']['code']
-            log.warning("Error from message server '%s', code %i", url, code)
+            log.warning("Error from message server '%s', code %i (Request ID: %i)", url, code, body['uri'])
             raise MetadataExceptions.get(code, GenericServerError)(result=result)
 
         return result
@@ -148,13 +148,15 @@ class ClaimMetadataAPI:
     def get_claim_data(self, uri: str) -> dict:
         """ Returns the data associated with a claim.
         :param uri: A string containing a full-length permanent LBRY claim URI.
-        :return:
+        :return: A
         """
         try:
             claim_data = self._server.make_request("get_claim_data",
                                                    {"uri": uri})
-        except InvalidClaimUriError as error:
+        except InvalidClaimUriError or InternalMetadataServerError as error:
             claim_data = error.response
+        finally:
+            return claim_data
 
 
 ''' ASYNC STUFF: Let's not use this until we have the normal sync version built

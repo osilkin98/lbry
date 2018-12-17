@@ -169,13 +169,17 @@ class ClaimMetadataAPI:
         :return: A `dict` that stores the data under the key 'result' if successful,
           or 'error' if not.
         """
-        uri = uri if uri.startswith('lbry://') else 'lbry://' + uri
-        try:
-            return self._server.make_request("get_claim_data", {"uri": uri})
-        except InvalidClaimUriError and InternalMetadataServerError as error:
-            return error.response
+        return self._call_api('get_claim_data', **{'uri': uri})
 
+    def upvote_claim(self, uri: str, undo: bool = False) -> dict:
+        """ Upvotes a claim and returns the new total amount of upvotes.
 
+        :param uri: A string containing a full-length permanent LBRY claim URI.
+        :param undo: Specify whether or not you want to undo the upvote.
+        :return: An RPC `dict` containing the claim info. If the `uri` isn't valid
+          then 'error' is used as the key in place of 'result'
+        """
+        return self._call_api('upvote_claim', **{'uri': uri, 'undo': undo})
 
 ''' ASYNC STUFF: Let's not use this until we have the normal sync version built
 

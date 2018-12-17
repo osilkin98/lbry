@@ -158,8 +158,11 @@ class ClaimMetadataAPI:
         except tuple(MetadataExceptions.values()) as e:
             return e.response
 
-
     def ping(self) -> dict:
+        """ Pings the server
+
+        :return: That's a surprise ;)
+        """
         return self._server.make_request("ping")
 
     def get_claim_data(self, uri: str) -> dict:
@@ -175,11 +178,49 @@ class ClaimMetadataAPI:
         """ Upvotes a claim and returns the new total amount of upvotes.
 
         :param uri: A string containing a full-length permanent LBRY claim URI.
-        :param undo: Specify whether or not you want to undo the upvote.
-        :return: An RPC `dict` containing the claim info. If the `uri` isn't valid
-          then 'error' is used as the key in place of 'result'
+        :param undo: Specify whether or not you want to undo the upvote. False by default
+        :return: The new number of upvotes on that claim
         """
         return self._call_api('upvote_claim', **{'uri': uri, 'undo': undo})
+
+    def downvote_claim(self, uri: str, undo: bool = False) -> dict:
+        """ Downvotes a claim and returns the new amount of downvotes
+
+        :param uri: A string containing a full-length permanent LBRY claim URI.
+        :param undo: Specify whether or not you want to undo the downvote. False by default.
+        :return: New number of downvotes on that claim
+        """
+        return self._call_api('downvote_claim', **{'uri': uri, 'undo': undo})
+
+    def get_claim_uri(self, claim_index: int) -> dict:
+        """ Gets the URI of a claim given its claim index.
+
+        :param claim_index: An integer representing the index of the claim
+        :return: A String containing the full-length permanent LBRY URI
+          associated with the provided index. None if there is no URI associated
+          with the given claim index
+        """
+        return self._call_api('get_claim_uri', **{'claim_index': abs(claim_index)})
+
+    def get_claim_comments(self, uri: str) -> dict:
+        """ Returns all top-level comments on a claim.
+
+          {
+            'commment_index': Comment's index in the list
+            'claim_index': Claim's index in the database
+            'poster_name': Username of the commenter
+            'parent_index': Index of the comment that this is in reply to
+            'post_time': `int` representing the time this comment was made. Stored as UTC Epoch seconds
+            'message': `Actual body of the comment
+            'upvotes': self-explanatory
+            'downvotes': I would really hope this is also self-explanatory
+          }
+
+        :param uri: The claim's permanent URI.
+        :return: List of dicts with information about each top level comment:
+
+        """
+        return self._call_api('get_claim_comments', **{'uri': uri})
 
 ''' ASYNC STUFF: Let's not use this until we have the normal sync version built
 

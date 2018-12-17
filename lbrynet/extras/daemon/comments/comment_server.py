@@ -26,7 +26,7 @@ class MetadataServer:
         """
         self._server_url: str = server_url
         self._server_info: dict = {'last_updated': datetime.datetime.now(), 'status': None}
-        self._is_connected: bool = self._update_server_status()
+        self._is_connected: bool = self.update_server_status()
 
     @property
     def headers(self):

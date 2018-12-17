@@ -16,7 +16,7 @@ class MetadataServer:
         things such as likes or dislikes, and more importantly,
         the comments.
     """
-    _request_id: int = 1
+    _request_id: int = 0
     _headers = {'Content-Type': 'application/json'}
 
     def __init__(self, server_url: str = None, **kwargs):
@@ -118,6 +118,11 @@ class MetadataServer:
             raise MetadataExceptions.get(code, GenericServerError)(result=result)
 
         return result
+
+
+class ClaimMetadataAPI:
+    _server: MetadataServer = None
+
 
 
 ''' ASYNC STUFF: Let's not use this until we have the normal sync version built

@@ -137,10 +137,10 @@ class MetadataServer:
 
 class ClaimMetadataAPI:
 
-    def __init__(self, url: str = None, **kwargs)
+    def __init__(self, url: str = None, **kwargs):
         # Todo: This IP is temporary and should not stay here forever
         self.url = 'http://18.233.233.111:2903/api' if url is None else url
-        self._server = MetadataServer(url)
+        self._server = MetadataServer(self.url)
         self.username = kwargs.get("username", "Tester")
 
     def ping(self) -> dict:

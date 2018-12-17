@@ -136,8 +136,25 @@ class MetadataServer:
 
 
 class ClaimMetadataAPI:
-    _server: MetadataServer = None
 
+    def __init__(self, url: str, **kwargs):
+        self.url = url
+        self._server = MetadataServer(url)
+        self.username = kwargs.get("username", "Tester")
+
+    def ping(self) -> dict:
+        return self._server.make_request("ping")['result']
+
+    def get_claim_data(self, uri: str) -> dict:
+        """ Returns the data associated with a claim.
+        :param uri: A string containing a full-length permanent LBRY claim URI.
+        :return:
+        """
+        try:
+            claim_data = self._server.make_request("get_claim_data",
+                                                   {"uri": uri})
+        except InvalidClaimUriError as error:
+            claim_data = error.response
 
 
 ''' ASYNC STUFF: Let's not use this until we have the normal sync version built

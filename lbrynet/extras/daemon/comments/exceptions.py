@@ -37,8 +37,8 @@ class UnknownMetadataServerError(MetadataServerException):
 
 
 MetadataExceptions = {
-    '-32603': InternalMetadataServerError,
-    '-32602': InvalidParamsError,
-    '-1': UnknownMetadataServerError,
-    '1': InvalidClaimUriError
+    -32603: InternalMetadataServerError,
+    -32602: InvalidParamsError,
+    -1: UnknownMetadataServerError,
+    1: InvalidClaimUriError
 }

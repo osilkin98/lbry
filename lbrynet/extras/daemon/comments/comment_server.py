@@ -120,13 +120,16 @@ class MetadataServer:
                 self._is_connected = True
             except requests.exceptions.ConnectionError:
                 self._is_connected = False
-                log.error("Failed to connect to '%s'", self._server_url)
+                log.error("Failed to connect to '%s'", url)
                 return None
         if response.status_code != 200:
+            log.error("Got HTTP Error Code '%i' when connecting to '%s'",
+                      response.status_code, url)
             raise requests.HTTPError()
         result = response.json()
-        if 'error' in result:
+        if 'error' in result:  # JSON-RPC errors aren't critical since HTTP status is 200
             code = result['error']['code']
+            log.warning("Error from message server '%s', code %i", url, code)
             raise MetadataExceptions.get(code, GenericServerError)(result=result)
 
         return result

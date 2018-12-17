@@ -143,6 +143,22 @@ class ClaimMetadataAPI:
         self._server = MetadataServer(self.url)
         self.username = kwargs.get("username", "Tester")
 
+    def _call_api(self, method: str, **params) -> dict:
+        """ Makes a call to the API and processes the parameters
+
+        :param method: Name of the method to call. Plain and simple
+        :param params: Optional dict containing parameters to the API function
+        :return: The response from the server
+        """
+        # This should hopefully prevent the malformed URI error
+        if 'uri' in params and not params['uri'].startswith('lbry://'):
+            params['uri'] = 'lbry://' + params['uri']
+        try:
+            return self._server.make_request(method, params=params)
+        except tuple(MetadataExceptions.values()) as e:
+            return e.response
+
+
     def ping(self) -> dict:
         return self._server.make_request("ping")['result']
 

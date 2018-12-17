@@ -129,7 +129,7 @@ class MetadataServer:
         result = response.json()
         if 'error' in result:  # JSON-RPC errors aren't critical since HTTP status is 200
             code = result['error']['code']
-            log.warning("Error from message server '%s', code %i (Request ID: %i)", url, code, body['uri'])
+            log.warning("Error from message server '%s', code %i (Request ID: %i)", url, code, body['id'])
             raise MetadataExceptions.get(code, GenericServerError)(result=result)
 
         return result
@@ -137,8 +137,9 @@ class MetadataServer:
 
 class ClaimMetadataAPI:
 
-    def __init__(self, url: str, **kwargs):
-        self.url = url
+    def __init__(self, url: str = None, **kwargs)
+        # Todo: This IP is temporary and should not stay here forever
+        self.url = 'http://18.233.233.111:2903/api' if url is None else url
         self._server = MetadataServer(url)
         self.username = kwargs.get("username", "Tester")
 
@@ -147,16 +148,17 @@ class ClaimMetadataAPI:
 
     def get_claim_data(self, uri: str) -> dict:
         """ Returns the data associated with a claim.
-        :param uri: A string containing a full-length permanent LBRY claim URI.
-        :return: A
+        :param uri: A string containing a full-length permanent LBRY claim URI. The
+          URI shuold be of the form lbry://[permanent URI]
+        :return: A `dict` that stores the data under the key 'result' if successful,
+          or 'error' if not.
         """
+        uri = uri if uri.startswith('lbry://') else 'lbry://' + uri
         try:
-            claim_data = self._server.make_request("get_claim_data",
-                                                   {"uri": uri})
-        except InvalidClaimUriError or InternalMetadataServerError as error:
-            claim_data = error.response
-        finally:
-            return claim_data
+            return self._server.make_request("get_claim_data", {"uri": uri})
+        except InvalidClaimUriError and InternalMetadataServerError as error:
+            return error.response
+
 
 
 ''' ASYNC STUFF: Let's not use this until we have the normal sync version built

@@ -152,7 +152,7 @@ class ClaimMetadataAPI:
         # Todo: This IP is temporary and should not stay here forever
         self.url = 'http://18.233.233.111:2903/api' if url is None else url
         self._server = MetadataServer(self.url)
-        self.username = kwargs.get("username", "Tester")
+        self.username = kwargs.get("username", "A Cool LBRYian")
 
     def _call_api(self, method: str, **params) -> dict:
         """ Makes a call to the API and processes the parameters

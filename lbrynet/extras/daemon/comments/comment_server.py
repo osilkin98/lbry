@@ -252,6 +252,132 @@ class ClaimMetadataAPI:
         return response
 
 
+class CommentsAPI(ClaimMetadataAPI):
+
+    def __init__(self, username: str = "A Cool LBRYian", url: str = None, **kwargs):
+        """
+        :param username: Username being used when making comments
+        :param url: Server URL
+        :param kwargs: Anything
+        """
+        self.username = username
+        super().__init__(url, **kwargs)
+
+    def _call_api(self, method: str, **params) -> dict:
+        """ Overrides Claim API to add common routines that are general to most
+        API functions
+
+        :param method: API Method to call from the server
+        :param params: Any parameters given to the method
+        :return: `dict` object containing a 'result' field if successful,
+          or an 'error' field if not. Also contains an 'id' field that contains
+          the ID of the specific request, and a 'jsonrpc' field, containing
+          the json-rpc version number
+        """
+        if 'message' in params:
+            params['message'] = params['message'].strip()
+            if not 1 < len(params['message']) < 128:
+                raise ValueError("Message Body must be at most 65535 characters, "
+                                 + "and at least 2 characters after stripping the"
+                                 + " whitespace")
+
+        return super()._call_api(method, **params)
+
+
+    @property
+    def username(self) -> str:
+        return self._username
+
+    @username.setter
+    def username(self, new_name: str):
+        """
+
+        :param new_name: New username, should be between 2 and 127 characters
+          after the whitespace is stripped from either end
+        :raise ValueError: If username doesn't meet the above criteria.
+        """
+        # TODO: Make it so one username is universal for any instances of this object
+        if not 2 <= len(new_name.strip()) < 128:
+            raise ValueError("Username length must be at least 2 below 128")
+        self._username = new_name.strip()
+
+    def make_comment(self, uri: str, message: str) -> dict:
+        """ Creates a top-level comment and returns its ID.
+
+        :param uri: Permanent claim for the URI.
+        :param message: A string containing the body of the comment
+        :raise ValueError: If length of message is less than 2 or greater than 65535
+          after stripping whitespace from the start and end
+        :return: A 'result' field containing the ID of the comment if succeeded,
+          or an 'error' field if failed
+        """
+        return self._call_api('comment', **{'uri': uri,
+                                            'poster': self._username,
+                                            'message': message})
+
+    def reply(self, comment_id: int, message: str) -> dict:
+        """ Replies to an existing comment and returns the created comment's ID
+
+        :param comment_id: The ID of the comment being replied to
+        :param message: The body of the reply
+        :return: a 'result' field containing the ID of the newly made comment,
+          or an 'error' field if the method failed
+        """
+        return self._call_api('reply', **{'parent_id': comment_id,
+                                          'poster': self._username,
+                                          'message': message})
+
+    def get_comment(self, comment_id: int) -> dict:
+        """ Gets the data for a requested comment
+
+        :param comment_id: The ID of the requested comment
+        :return: The 'result' field contains a `Comment` object representing
+          the comment
+        """
+        response = self._call_api('get_comment_data', **{'comm_index': comment_id})
+        if 'result' in response and response['result'] is not None:
+            response['result'] = Comment(**response['result'])
+        return response
+
+    def upvote_comment(self, comment_id: int, undo: bool = False) -> dict:
+        """ Upvote a comment given its ID. If the undo flag is set to True,
+        then the upvote is removed.
+
+        :param comment_id: ID of the comment to upvote
+        :param undo: Remove an upvote from the comment. Off by default
+        :return: The new number of upvotes in the 'result' field, or None if
+          there is no comment that matches the given ID
+        """
+        return self._call_api('upvote_comment', **{'comm_index': comment_id,
+                                                   'undo': undo})
+
+    def downvote_comment(self, comment_id: int, undo: bool = False) -> dict:
+        """ Downvote a comment given its ID. If the undo flag is set to True,
+        then the downvote is removed.
+
+        :param comment_id: ID of the comment to downvote
+        :param undo: Remove a downvote from the comment. Off by default
+        :return: The new number of downvotes in the 'result' field, or None if
+          there is no comment that matches the given ID
+        """
+        return self._call_api('downvote_comment', **{'comm_index': comment_id,
+                                                     'undo': undo})
+
+    def get_comment_replies(self, comment_id: int) -> dict:
+        """ Gets all the direct replies to a comment. These replies are
+          stored as Comment objects in a list within the 'result' field.
+
+        :param comment_id: The ID of the comment we want to see replies from
+        :return: a `dict` containing a list of comment objects in the 'result'.
+          If there is no comment with the specified ID, then None is stored
+          in 'result' instead.
+        """
+        response = self._call_api('get_comment_replies',
+                                  **{'comm_index': comment_id})
+        if 'result' in response and response['result'] is not None:
+            for i, reply in enumerate(response['result']):
+                response['result'][i] = Comment(**reply)
+        return response
 
 ''' ASYNC STUFF: Let's not use this until we have the normal sync version built
 

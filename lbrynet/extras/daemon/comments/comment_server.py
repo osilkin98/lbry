@@ -1,3 +1,4 @@
+from collections import namedtuple
 import requests
 import datetime
 from typing import Union
@@ -135,6 +136,16 @@ class MetadataServer:
         return result
 
 
+Comment = namedtuple(
+    typename='Comment',
+    field_names=(
+        'comment_index', 'claim_index', 'poster_name', 'parent_index',
+        'post_time', 'message', 'upvotes', 'downvotes'
+    ),
+    defaults=(None,) * 8
+)
+
+
 class ClaimMetadataAPI:
 
     def __init__(self, url: str = None, **kwargs):
@@ -203,24 +214,44 @@ class ClaimMetadataAPI:
         return self._call_api('get_claim_uri', **{'claim_index': abs(claim_index)})
 
     def get_claim_comments(self, uri: str) -> dict:
-        """ Returns all top-level comments on a claim.
+        """ Returns a list of all the top level comments for a given claim.
+        Each list entry is a Comment objec, which has the attributes:.
 
-          {
+        {
             'commment_index': Comment's index in the list
+
             'claim_index': Claim's index in the database
+
             'poster_name': Username of the commenter
-            'parent_index': Index of the comment that this is in reply to
+
+            'parent_index': Index of the comment that this is in reply to. None if this is the top level comment
+
             'post_time': `int` representing the time this comment was made. Stored as UTC Epoch seconds
-            'message': `Actual body of the comment
+
+            'message': Actual body of the comment
+
             'upvotes': self-explanatory
-            'downvotes': I would really hope this is also self-explanatory
-          }
+
+            'downvotes': elf-explanatory
+        }
 
         :param uri: The claim's permanent URI.
         :return: List of dicts with information about each top level comment:
 
         """
-        return self._call_api('get_claim_comments', **{'uri': uri})
+        response = self._call_api('get_claim_comments', **{'uri': uri})
+        if 'result' in response:
+            for i, comment in enumerate(response['result']):
+                comment['comment_index'] = comment['comm_index']
+                del comment['comm_index']
+                if 'parent_com' in comment:
+                    comment['parent_index'] = comment['parent_com']
+                    del comment['parent_com']
+                response['result'][i] = Comment(**comment)
+
+        return response
+
+
 
 ''' ASYNC STUFF: Let's not use this until we have the normal sync version built
 

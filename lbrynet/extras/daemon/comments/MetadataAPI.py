@@ -2,7 +2,7 @@ from typing import NamedTuple
 
 import requests
 
-from lbrynet.extras.daemon.comments.comment_server import MetadataServer
+from lbrynet.extras.daemon.comments.CommentServer import MetadataServer
 from lbrynet.extras.daemon.comments.exceptions import MetadataExceptions, GenericServerError
 
 

@@ -217,7 +217,7 @@ class ClaimMetadataAPI:
         """
         return self._call_api('ping')
 
-    def get_claim(self, uri: str) -> Claim:
+    def get_claim(self, uri: str) -> ClaimMetadata:
         """ Returns the data associated with a claim.
         :param uri: A string containing a full-length permanent LBRY claim URI. The
           URI shuold be of the form lbry://[permanent URI]
@@ -225,7 +225,7 @@ class ClaimMetadataAPI:
         :return: A Claim object if successful, otherwise None
         """
         claim_data = self._call_api('get_claim_data', **{'uri': uri})
-        return Claim(**claim_data)
+        return ClaimMetadata.from_response(claim_data)
 
     def upvote_claim(self, uri: str, undo: bool = False) -> int:
         """ Upvotes a claim and returns the new total amount of upvotes.
@@ -236,7 +236,7 @@ class ClaimMetadataAPI:
         """
         return self._call_api('upvote_claim', **{'uri': uri, 'undo': undo})
 
-    def downvote_claim(self, uri: str, undo: bool = False) -> dict:
+    def downvote_claim(self, uri: str, undo: bool = False) -> int:
         """ Downvotes a claim and returns the new amount of downvotes
 
         :param uri: A string containing a full-length permanent LBRY claim URI.
@@ -245,7 +245,7 @@ class ClaimMetadataAPI:
         """
         return self._call_api('downvote_claim', **{'uri': uri, 'undo': undo})
 
-    def get_claim_uri(self, claim_index: int) -> dict:
+    def get_claim_uri(self, claim_index: int) -> str:
         """ Gets the URI of a claim given its claim index.
 
         :param claim_index: An integer representing the index of the claim
@@ -255,45 +255,23 @@ class ClaimMetadataAPI:
         """
         return self._call_api('get_claim_uri', **{'claim_index': abs(claim_index)})
 
-    def get_claim_comments(self, uri: str) -> dict:
-        """ Returns a list of all the top level comments for a given claim.
-        Each list entry is a Comment objec, which has the attributes:.
-
-        {
-            'commment_index': Comment's index in the list
-
-            'claim_index': Claim's index in the database
-
-            'poster_name': Username of the commenter
-
-            'parent_index': Index of the comment that this is in reply to. None if this is the top level comment
-
-            'post_time': `int` representing the time this comment was made. Stored as UTC Epoch seconds
-
-            'message': Actual body of the comment
-
-            'upvotes': self-explanatory
-
-            'downvotes': elf-explanatory
-        }
+    def get_claim_comments(self, uri: str) -> list:
+        """ Returns a list of Comment objects representing all the top level
+          Comments for the given claim URI
 
         :param uri: The claim's permanent URI.
-        :return: List of dicts with information about each top level comment:
-
+        :raises InvalidClaimUriError: If the URI isn't valid or acceptable
+        :return: List of Comment objects, or None if the claim isn't in the
+          database
         """
-        response = self._call_api('get_claim_comments', **{'uri': uri})
-        if 'result' in response:
-            for i, comment in enumerate(response['result']):
-                comment['comment_index'] = comment['comm_index']
-                del comment['comm_index']
-                if 'parent_com' in comment:
-                    comment['parent_index'] = comment['parent_com']
-                    del comment['parent_com']
-                response['result'][i] = Comment(**comment)
-
+        response: list = self._call_api('get_claim_comments', **{'uri': uri})
+        if response is not None:
+            for i, comment in enumerate(response):
+                response[i] = Comment.from_response(comment)
         return response
 
 # doge#b0d293791d1761707c23e93eb915a3c1300d17b5
+
 
 class CommentsAPI(ClaimMetadataAPI):
     def __init__(self, username: str = "A Cool LBRYian", url: str = None, **kwargs):
@@ -305,12 +283,14 @@ class CommentsAPI(ClaimMetadataAPI):
         self.username = username
         super().__init__(url, username=username, **kwargs)
 
-    def _call_api(self, method: str, **params) -> dict:
+    def _call_api(self, method: str, **params) -> any:
         """ Overrides Claim API to add common routines that are general to most
         API functions
 
         :param method: API Method to call from the server
         :param params: Any parameters given to the method
+        :raises ValueError: If 'message' is in `params` and isn't between
+          2^1 and 2^16 - 1
         :return: `dict` object containing a 'result' field if successful,
           or an 'error' field if not. Also contains an 'id' field that contains
           the ID of the specific request, and a 'jsonrpc' field, containing
@@ -331,7 +311,7 @@ class CommentsAPI(ClaimMetadataAPI):
         return self._username
 
     @username.setter
-    def username(self, new_name: str):
+    def username(self, new_name: str) -> None:
         """
 
         :param new_name: New username, should be between 2 and 127 characters
@@ -343,90 +323,79 @@ class CommentsAPI(ClaimMetadataAPI):
             raise ValueError("Username length must be at least 2 below 128")
         self._username = new_name.strip()
 
-    def make_comment(self, uri: str, message: str) -> dict:
+    def make_comment(self, uri: str, message: str) -> int:
         """ Creates a top-level comment and returns its ID.
 
         :param uri: Permanent claim for the URI.
         :param message: A string containing the body of the comment
-        :raise ValueError: If length of message is less than 2 or greater than 65535
+        :raises ValueError: If length of message is less than 2 or greater than 65535
           after stripping whitespace from the start and end
-        :return: A 'result' field containing the ID of the comment if succeeded,
-          or an 'error' field if failed
+        :raises InvalidClaimUriError: If the provided URI isn't valid / acceptable
+        :return: ID of the newly created comment
         """
         return self._call_api('comment', **{'uri': uri,
                                             'poster': self._username,
                                             'message': message})
 
-    def reply(self, comment_id: int, message: str) -> dict:
+    def reply(self, comment_id: int, message: str) -> int:
         """ Replies to an existing comment and returns the created comment's ID
 
         :param comment_id: The ID of the comment being replied to
         :param message: The body of the reply
-        :return: a 'result' field containing the ID of the newly made comment,
-          or an 'error' field if the method failed
+        :raises ValueError: If the length of the comment isn't between
+          2 and 65535
+        :return: The ID of the new comment or None if the comment doesn't exist
         """
         return self._call_api('reply', **{'parent_id': comment_id,
                                           'poster': self._username,
                                           'message': message})
 
-    def get_comment(self, comment_id: int) -> dict:
+    def get_comment(self, comment_id: int) -> Comment:
         """ Gets the data for a requested comment
 
         :param comment_id: The ID of the requested comment
-        :return: The 'result' field contains a `Comment` object representing
-          the comment
+        :return: Comment object if the comment exists, None otherwise
         """
         response = self._call_api('get_comment_data', **{'comm_index': comment_id})
-        if 'result' in response and response['result'] is not None:
-            comment = response['result']
-            comment['comment_index'] = comment['comm_index']
-            del comment['comm_index']
-            if 'parent_com' in comment:
-                comment['parent_index'] = comment['parent_com']
-                del comment['parent_com']
-            response['result'] = Comment(**comment)
-        return response
+        return None if response is None else Comment.from_response(response)
 
-    def upvote_comment(self, comment_id: int, undo: bool = False) -> dict:
+    def upvote_comment(self, comment_id: int, undo: bool = False) -> int:
         """ Upvote a comment given its ID. If the undo flag is set to True,
         then the upvote is removed.
 
         :param comment_id: ID of the comment to upvote
         :param undo: Remove an upvote from the comment. Off by default
-        :return: The new number of upvotes in the 'result' field, or None if
-          there is no comment that matches the given ID
+        :return: New number of upvotes on the comment, or None if
+          it doesn't exist
         """
         return self._call_api('upvote_comment', **{'comm_index': comment_id,
                                                    'undo': undo})
 
-    def downvote_comment(self, comment_id: int, undo: bool = False) -> dict:
+    def downvote_comment(self, comment_id: int, undo: bool = False) -> int:
         """ Downvote a comment given its ID. If the undo flag is set to True,
         then the downvote is removed.
 
         :param comment_id: ID of the comment to downvote
         :param undo: Remove a downvote from the comment. Off by default
-        :return: The new number of downvotes in the 'result' field, or None if
-          there is no comment that matches the given ID
+        :return: New number of downvotes on that comment, or None if it
+          doesn't exist
         """
         return self._call_api('downvote_comment', **{'comm_index': comment_id,
                                                      'undo': undo})
 
-    def get_comment_replies(self, comment_id: int) -> dict:
+    def get_comment_replies(self, comment_id: int) -> list:
         """ Gets all the direct replies to a comment. These replies are
           stored as Comment objects in a list within the 'result' field.
 
         :param comment_id: The ID of the comment we want to see replies from
-        :return: a `dict` containing a list of comment objects in the 'result'.
-          If there is no comment with the specified ID, then None is stored
-          in 'result' instead.
+        :return: List of comment objects representing the replies to that
+          particular Comment ID, or None if it doesn't exist
         """
-        response = self._call_api('get_comment_replies',
-                                  **{'comm_index': comment_id})
-        '''
-        if 'result' in response and response['result'] is not None:
-            for i, reply in enumerate(response['result']):
-                response['result'][i] = Comment(**reply)
-        '''
+        response: list = self._call_api('get_comment_replies',
+                                        **{'comm_index': comment_id})
+        if response is not None:
+            for i, comment in enumerate(response):
+                response[i] = Comment.from_response(comment)
         return response
 
 ''' ASYNC STUFF: Let's not use this until we have the normal sync version built

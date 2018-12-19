@@ -30,7 +30,7 @@ class ClaimMetadata(NamedTuple):
 
 
 class Comment(NamedTuple):
-    comment_index: int
+    id: int
     claim_index: int
     author: str
     parent_index: int
@@ -44,7 +44,7 @@ class Comment(NamedTuple):
         if comment_data is None:
             return None
         return cls(
-            comment_index=comment_data['comm_index'],
+            id=comment_data['comm_index'],
             claim_index=comment_data['claim_index'],
             author=comment_data['poster_name'],
             parent_index=comment_data.get('parent_com', None),  # parent_com might be null
@@ -262,7 +262,7 @@ class CommentsAPI(ClaimMetadataAPI):
         return self._call_api('downvote_comment', **{'comm_index': comment_id,
                                                      'undo': undo})
 
-    def get_comment_replies(self, comment_id: int) -> list:
+    def _get_comment_reply_id_list(self, comment_id: int) -> list:
         """ Gets the IDs of all the comments that replied to the given
           comment ID and returns them as a list.
 
@@ -274,3 +274,22 @@ class CommentsAPI(ClaimMetadataAPI):
                                         **{'comm_index': comment_id})
         return response
 
+    # TODO: This DEFINITELY is going to be Async
+    def _get_comment_replies(self, id_list: list) -> list:
+        """ Given a list of Reply IDs, this will generate a list of
+        corresponding comment objects
+
+        :param id_list: List of comment IDs
+        :return: List of Comment objects with their indices corresponding to
+          that of the given id_list.
+        """
+        return [self.get_comment(reply_id) for reply_id in id_list]
+
+    def get_replies(self, comment: Comment) -> list:
+        """ Given a comment, return a list of replies as Comment objects
+
+        :param comment: A `Comment` object to get replies for
+        :return: List of `Comment` objects that are replying to `comment`
+        """
+        reply_id_list = self._get_comment_reply_id_list(comment.id)
+        return self._get_comment_replies(reply_id_list)

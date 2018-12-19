@@ -385,19 +385,17 @@ class CommentsAPI(ClaimMetadataAPI):
                                                      'undo': undo})
 
     def get_comment_replies(self, comment_id: int) -> list:
-        """ Gets all the direct replies to a comment. These replies are
-          stored as Comment objects in a list within the 'result' field.
+        """ Gets the IDs of all the comments that replied to the given
+          comment ID and returns them as a list.
 
         :param comment_id: The ID of the comment we want to see replies from
-        :return: List of comment objects representing the replies to that
-          particular Comment ID, or None if it doesn't exist
+        :return: List of IDs that link to comment objects. or None if
+          there is no comment with that given ID
         """
         response: list = self._call_api('get_comment_replies',
                                         **{'comm_index': comment_id})
-        if response is not None:
-            for i, comment in enumerate(response):
-                response[i] = Comment.from_response(comment)
         return response
+
 
 ''' ASYNC STUFF: Let's not use this until we have the normal sync version built
 

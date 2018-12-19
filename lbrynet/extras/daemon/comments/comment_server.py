@@ -251,9 +251,9 @@ class ClaimMetadataAPI:
 
         return response
 
+# doge#b0d293791d1761707c23e93eb915a3c1300d17b5
 
 class CommentsAPI(ClaimMetadataAPI):
-
     def __init__(self, username: str = "A Cool LBRYian", url: str = None, **kwargs):
         """
         :param username: Username being used when making comments
@@ -261,7 +261,7 @@ class CommentsAPI(ClaimMetadataAPI):
         :param kwargs: Anything
         """
         self.username = username
-        super().__init__(url, **kwargs)
+        super().__init__(url, username=username, **kwargs)
 
     def _call_api(self, method: str, **params) -> dict:
         """ Overrides Claim API to add common routines that are general to most
@@ -276,7 +276,7 @@ class CommentsAPI(ClaimMetadataAPI):
         """
         if 'message' in params:
             params['message'] = params['message'].strip()
-            if not 1 < len(params['message']) < 128:
+            if not 1 < len(params['message']) < 65535:
                 raise ValueError("Message Body must be at most 65535 characters, "
                                  + "and at least 2 characters after stripping the"
                                  + " whitespace")
@@ -336,7 +336,13 @@ class CommentsAPI(ClaimMetadataAPI):
         """
         response = self._call_api('get_comment_data', **{'comm_index': comment_id})
         if 'result' in response and response['result'] is not None:
-            response['result'] = Comment(**response['result'])
+            comment = response['result']
+            comment['comment_index'] = comment['comm_index']
+            del comment['comm_index']
+            if 'parent_com' in comment:
+                comment['parent_index'] = comment['parent_com']
+                del comment['parent_com']
+            response['result'] = Comment(**comment)
         return response
 
     def upvote_comment(self, comment_id: int, undo: bool = False) -> dict:
@@ -374,9 +380,11 @@ class CommentsAPI(ClaimMetadataAPI):
         """
         response = self._call_api('get_comment_replies',
                                   **{'comm_index': comment_id})
+        '''
         if 'result' in response and response['result'] is not None:
             for i, reply in enumerate(response['result']):
                 response['result'][i] = Comment(**reply)
+        '''
         return response
 
 ''' ASYNC STUFF: Let's not use this until we have the normal sync version built

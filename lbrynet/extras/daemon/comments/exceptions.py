@@ -15,7 +15,6 @@ class MetadataServerException(Exception):
         super().__init__(*args)
 
 
-
 class GenericServerError(MetadataServerException):
     """ This is for any standard JSON-RPC errors that aren't documented by the Comment API """
 

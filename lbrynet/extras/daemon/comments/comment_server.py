@@ -102,12 +102,7 @@ class MetadataServer:
         :param url: URL of the specific server the request will be made to
         :param method: API method to call from the comments server.
         :param params: Parameters for the given method.
-        :raises InternalMetadataServerError: if something internally breaks
-        :raises InvalidParamsError: if the parameters don't match the server
-        :raises InvalidClaimUriError: if the wrong URI is passed in
-        :raises UnknownMetadataServerError: if we hit a snag and don't know what happened
-        :raises GenericServerError: if we snag a generic JSON-RPC error that
-          wasn't documented by the API but is in the standard
+        :raises requests.HTTPError: If the HTTP response is anything besides 200
         :return: A `dict` of the JSON response. If the request was normal then
           it will contain a 'result' field, and 'error' if otherwise
         """
@@ -123,16 +118,11 @@ class MetadataServer:
                 self._is_connected = False
                 log.error("Failed to connect to '%s'", url)
                 return None
-        if response.status_code != 200:
-            log.error("Got HTTP Error Code '%i' when connecting to '%s'",
-                      response.status_code, url)
+        if not response.ok():
+            log.error("Request [%i] got HTTP Error Code '%i' when connecting to '%s'",
+                      body['id'], response.status_code, url)
             raise requests.HTTPError()
         result = response.json()
-        if 'error' in result:  # JSON-RPC errors aren't critical since HTTP status is 200
-            code = result['error']['code']
-            log.warning("Error from message server '%s', code %i (Request ID: %i)", url, code, body['id'])
-            raise MetadataExceptions.get(code, GenericServerError)(result=result)
-
         return result
 
 
@@ -154,38 +144,52 @@ class ClaimMetadataAPI:
         self._server = MetadataServer(self.url)
         self.username = kwargs.get("username", "A Cool LBRYian")
 
-    def _call_api(self, method: str, **params) -> dict:
+    def _call_api(self, method: str, **params) -> any:
         """ Makes a call to the API and processes the parameters
 
         :param method: Name of the method to call. Plain and simple
         :param params: Optional dict containing parameters to the API function
+        :raises InternalMetadataServerError: if something internally breaks
+        :raises InvalidParamsError: if the parameters don't match the server
+        :raises InvalidClaimUriError: if the wrong URI is passed in
+        :raises UnknownMetadataServerError: if we hit a snag and don't know what happened
+        :raises GenericServerError: if we snag a generic JSON-RPC error that
+          is in the standard but undocumented by the server API
         :return: The response from the server
         """
         # This should hopefully prevent the malformed URI error
         if 'uri' in params and not params['uri'].startswith('lbry://'):
             params['uri'] = 'lbry://' + params['uri']
         try:
-            return self._server.make_request(method, params=params)
-        except tuple(MetadataExceptions.values()) as e:
-            return e.response
+            response = self._server.make_request(method, params=params)
+            if 'error' in response:
+                raise MetadataExceptions.get(   # Raise the exception that
+                    response['error']['code'],  # corresponds to error code
+                    GenericServerError  # Default to this if none do
+                )(response)
 
-    def ping(self) -> dict:
+            return response['result']
+        except requests.HTTPError:
+            return None
+
+    def ping(self) -> str:
         """ Pings the server
 
         :return: That's a surprise ;)
         """
-        return self._server.make_request("ping")
+        return self._call_api('ping')
 
-    def get_claim_data(self, uri: str) -> dict:
+    def get_claim(self, uri: str) -> Claim:
         """ Returns the data associated with a claim.
         :param uri: A string containing a full-length permanent LBRY claim URI. The
           URI shuold be of the form lbry://[permanent URI]
-        :return: A `dict` that stores the data under the key 'result' if successful,
-          or 'error' if not.
+        :raises InvalidClaimUriError: If the URI isn't acceptable
+        :return: A Claim object if successful, otherwise None
         """
-        return self._call_api('get_claim_data', **{'uri': uri})
+        claim_data = self._call_api('get_claim_data', **{'uri': uri})
+        return Claim(**claim_data)
 
-    def upvote_claim(self, uri: str, undo: bool = False) -> dict:
+    def upvote_claim(self, uri: str, undo: bool = False) -> int:
         """ Upvotes a claim and returns the new total amount of upvotes.
 
         :param uri: A string containing a full-length permanent LBRY claim URI.
@@ -276,7 +280,7 @@ class CommentsAPI(ClaimMetadataAPI):
         """
         if 'message' in params:
             params['message'] = params['message'].strip()
-            if not 1 < len(params['message']) < 65535:
+            if not 1 < len(params['message']) < 65536:
                 raise ValueError("Message Body must be at most 65535 characters, "
                                  + "and at least 2 characters after stripping the"
                                  + " whitespace")

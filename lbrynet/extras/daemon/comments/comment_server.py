@@ -164,13 +164,14 @@ class Comment(NamedTuple):
         if comment_data is None:
             return None
         return cls(
-            comment_data['comm_index'],
-            comment_data['claim_index'],
-            comment_data['parent_com'],
-            comment_data['post_time'],
-            comment_data['message'],
-            comment_data['upvotes'],
-            comment_data['downvotes']
+            comment_index=comment_data['comm_index'],
+            claim_index=comment_data['claim_index'],
+            author=comment_data['poster_name'],
+            parent_index=comment_data.get('parent_com', None),  # parent_com might be null
+            time_created=comment_data['post_time'],
+            body=comment_data['message'],
+            upvotes=comment_data['upvotes'],
+            downvotes=comment_data['downvotes']
         )
 
 

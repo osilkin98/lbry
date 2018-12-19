@@ -1,7 +1,7 @@
 from collections import namedtuple
 import requests
 import datetime
-from typing import Union
+from typing import Union, Any, NamedTuple, Iterable
 import logging
 from lbrynet.extras.daemon.comments.exceptions import GenericServerError
 from lbrynet.extras.daemon.comments.exceptions import MetadataExceptions
@@ -126,14 +126,52 @@ class MetadataServer:
         return result
 
 
-Comment = namedtuple(
-    typename='Comment',
-    field_names=(
-        'comment_index', 'claim_index', 'poster_name', 'parent_index',
-        'post_time', 'message', 'upvotes', 'downvotes'
-    ),
-    defaults=(None,) * 8
-)
+class ClaimMetadata(NamedTuple):
+    """ This represents a claim entry on the comment server. Please
+    don't confuse this as being an actual claim object. """
+
+    claim_index: int
+    permanent_uri: str
+    time_created: int
+    upvotes: int
+    downvotes: int
+
+    @classmethod
+    def from_response(cls: type, claim_data: dict):
+        if claim_data is None:
+            return None
+        return cls(
+            claim_data['claim_index'],  # This ugly block is needed
+            claim_data['lbry_perm_uri'],  # in order to rename the
+            claim_data['add_time'],  # variable names we received from
+            claim_data['upvotes'],  # the server into good ones
+            claim_data['downvotes']   # that normal people can read
+        )
+
+
+class Comment(NamedTuple):
+    comment_index: int
+    claim_index: int
+    author: str
+    parent_index: int
+    time_created: int
+    body: str
+    upvotes: int
+    downvotes: int
+
+    @classmethod
+    def from_response(cls: type, comment_data: dict):
+        if comment_data is None:
+            return None
+        return cls(
+            comment_data['comm_index'],
+            comment_data['claim_index'],
+            comment_data['parent_com'],
+            comment_data['post_time'],
+            comment_data['message'],
+            comment_data['upvotes'],
+            comment_data['downvotes']
+        )
 
 
 class ClaimMetadataAPI:

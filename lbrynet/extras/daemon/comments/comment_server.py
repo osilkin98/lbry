@@ -118,7 +118,7 @@ class MetadataServer:
                 self._is_connected = False
                 log.error("Failed to connect to '%s'", url)
                 return None
-        if not response.ok():
+        if not response.ok:
             log.error("Request [%i] got HTTP Error Code '%i' when connecting to '%s'",
                       body['id'], response.status_code, url)
             raise requests.HTTPError()

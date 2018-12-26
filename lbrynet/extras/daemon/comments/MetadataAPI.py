@@ -3,7 +3,7 @@ from typing import NamedTuple
 import requests
 
 from lbrynet.extras.daemon.comments.CommentServer import MetadataServer
-from lbrynet.extras.daemon.comments.exceptions import MetadataExceptions, GenericServerError
+from lbrynet.extras.daemon.comments.exceptions import *
 
 
 class ClaimMetadata(NamedTuple):

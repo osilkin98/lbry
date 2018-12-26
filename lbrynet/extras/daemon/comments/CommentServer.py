@@ -15,8 +15,8 @@ class MetadataServer:
         things such as likes or dislikes, and more importantly,
         the comments.
     """
-    _request_id: int = 0
-    _headers = {'Content-Type': 'application/json'}
+    __request_id: int = 0
+    __headers = {'Content-Type': 'application/json'}
 
     def __init__(self, server_url: str = None, **kwargs):
         """
@@ -29,7 +29,7 @@ class MetadataServer:
 
     @property
     def headers(self):
-        return self._headers
+        return self.__headers
 
     @property
     def is_connected(self) -> bool:
@@ -37,7 +37,7 @@ class MetadataServer:
 
     @classmethod
     def request_id(cls) -> int:
-        return cls._request_id
+        return cls.__request_id
 
     @classmethod
     def _make_request_body(cls, method: str, params: dict = None) -> dict:
@@ -52,12 +52,12 @@ class MetadataServer:
         """
         body = {
             'jsonrpc': '2.0',
-            'id': cls._request_id,
+            'id': cls.__request_id,
             'method': method,
         }
         if params is not None:
             body['params'] = params
-        cls._request_id += 1
+        cls.__request_id += 1
         return body
 
     @property
@@ -99,7 +99,7 @@ class MetadataServer:
           it will contain a 'result' field, and 'error' if otherwise
         """
         url = self._server_url if url is None else url
-        headers, body = self._headers, self._make_request_body(method, params=params)
+        headers, body = self.__headers, self._make_request_body(method, params=params)
 
         with requests.Session() as sesh:
             try:
@@ -128,7 +128,7 @@ class MetadataServer:
         things such as likes or dislikes, and more importantly,
         the comments.
     """
-    _request_id = 0
+    __request_id = 0
     _session = aiohttp.ClientSession()
 
     def __init__(self, server_url: str = None):
@@ -141,8 +141,8 @@ class MetadataServer:
 
     @property
     def request_id(self):
-        self._request_id += 1
-        return self._request_id
+        self.__request_id += 1
+        return self.__request_id
 
     @property
     def server_url(self):

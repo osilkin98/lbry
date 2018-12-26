@@ -16,7 +16,6 @@ class MetadataServer:
         the comments.
     """
     __request_id: int = 0
-    __headers = {'Content-Type': 'application/json'}
 
     def __init__(self, server_url: str = None, **kwargs):
         """
@@ -25,12 +24,10 @@ class MetadataServer:
         """
         self._server_url: str = server_url
         self._server_info: dict = {'last_updated': datetime.datetime.now(), 'status': None}
-        self._session = kwargs.get("session", requests.Session())
+        self._session = kwargs.get("session", aiohttp.ClientSession(
+            headers={'Content-Type': 'application/json'}  # Sets headers here
+        ))
         self._is_connected: bool = self.update_server_status()
-        
-    @property
-    def headers(self):
-        return self.__headers
 
     @property
     def is_connected(self) -> bool:
@@ -100,12 +97,12 @@ class MetadataServer:
           it will contain a 'result' field, and 'error' if otherwise
         """
         url = self._server_url if url is None else url
-        headers, body = self.__headers, self._make_request_body(method, params=params)
+        body = self._make_request_body(method, params=params)
 
         with self._session as session:
             try:
                 log.debug("Sending POST request to '%s' for method '%s'", url, method)
-                response = session.post(url, headers=headers, json=body)
+                response = await session.post(url, json=body)
                 self._is_connected = True
             except requests.exceptions.ConnectionError:
                 self._is_connected = False

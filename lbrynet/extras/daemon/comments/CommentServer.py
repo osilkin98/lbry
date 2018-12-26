@@ -2,7 +2,8 @@ import requests
 import datetime
 from typing import Union
 import logging
-
+import asyncio
+import aiohttp
 
 log = logging.getLogger(__name__)
 
@@ -17,16 +18,24 @@ class MetadataServer:
     """
     __request_id: int = 0
 
-    def __init__(self, server_url: str = None, **kwargs):
+    def __init__(self,
+                 server_url: str = None,
+                 session: aiohttp.ClientSession = None,
+                 event_loop: asyncio.AbstractEventLoop = None,
+                 **kwargs):
         """
         :param server_url: Location of the server. Note that in the future
           this will be multiple, however for now it's just the one.
+        :param session: This is the session object to be used for making
+          HTTP requests to the actual server.
+        :param event_loop: This is the async event loop to be used when
+          invoking the actual
         """
         self._server_url: str = server_url
         self._server_info: dict = {'last_updated': datetime.datetime.now(), 'status': None}
-        self._session = kwargs.get("session", aiohttp.ClientSession(
+        self._session = session if session is not None else aiohttp.ClientSession(
             headers={'Content-Type': 'application/json'}  # Sets headers here
-        ))
+        )
         self._is_connected: bool = self.update_server_status()
 
     @property
@@ -82,7 +91,7 @@ class MetadataServer:
         self._server_info['status'] = None if 'error' in response else response['result']
         return True
 
-    def make_request(self, method: str, params: dict = None,
+    async def make_request(self, method: str, params: dict = None,
                      url: str = None, **kwargs) -> Union[dict, None]:
         """ Asynchronously makes a request to the metadata server using the
         incremented ID, as well as the given method and parameters.
@@ -99,7 +108,7 @@ class MetadataServer:
         url = self._server_url if url is None else url
         body = self._make_request_body(method, params=params)
 
-        with self._session as session:
+        async with self._session as session:
             try:
                 log.debug("Sending POST request to '%s' for method '%s'", url, method)
                 response = await session.post(url, json=body)

@@ -25,8 +25,9 @@ class MetadataServer:
         """
         self._server_url: str = server_url
         self._server_info: dict = {'last_updated': datetime.datetime.now(), 'status': None}
+        self._session = kwargs.get("session", requests.Session())
         self._is_connected: bool = self.update_server_status()
-
+        
     @property
     def headers(self):
         return self.__headers
@@ -101,10 +102,10 @@ class MetadataServer:
         url = self._server_url if url is None else url
         headers, body = self.__headers, self._make_request_body(method, params=params)
 
-        with requests.Session() as sesh:
+        with self._session as session:
             try:
                 log.debug("Sending POST request to '%s' for method '%s'", url, method)
-                response = sesh.post(url, headers=headers, json=body)
+                response = session.post(url, headers=headers, json=body)
                 self._is_connected = True
             except requests.exceptions.ConnectionError:
                 self._is_connected = False

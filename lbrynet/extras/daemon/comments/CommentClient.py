@@ -111,9 +111,8 @@ class MetadataClient:
                 self._is_connected = False
                 log.error("Failed to connect to '%s'", url)
                 return None
+        
         if not response.status < 400:
-            log.error("Request [%i] got HTTP Error Code '%i' when connecting to '%s'",
-                      body['id'], response.status, url)
             raise aiohttp.http.HttpProcessingError(
                 code=response.status,
                 message=response.reason,

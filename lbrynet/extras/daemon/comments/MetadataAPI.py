@@ -92,7 +92,9 @@ class ClaimMetadataAPI:
                 )(response)
 
             return response['result']
-        except requests.HTTPError:
+        except aiohttp.http.HttpProcessingError as error:
+            log.error("POST Request to %s got error code %i, reason: %s",
+                      self.url, error.code, error.message)
             return None
 
     async def ping(self) -> str:

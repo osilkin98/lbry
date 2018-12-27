@@ -1,9 +1,13 @@
+import logging
 from typing import NamedTuple
 
-import requests
+import asyncio
+import aiohttp
 
-from lbrynet.extras.daemon.comments.CommentServer import MetadataServer
+from lbrynet.extras.daemon.comments.CommentClient import MetadataClient
 from lbrynet.extras.daemon.comments.exceptions import *
+
+log = logging.getLogger(__name__)
 
 
 class ClaimMetadata(NamedTuple):
@@ -60,10 +64,10 @@ class ClaimMetadataAPI:
     def __init__(self, url: str = None, **kwargs):
         # Todo: This IP is temporary and should not stay here forever
         self.url = 'http://18.233.233.111:2903/api' if url is None else url
-        self._server = MetadataServer(self.url)
+        self._server = MetadataClient(self.url)
         self.username = kwargs.get("username", "A Cool LBRYian")
 
-    def _call_api(self, method: str, **params) -> any:
+    async def _call_api(self, method: str, **params) -> any:
         """ Makes a call to the API and processes the parameters
 
         :param method: Name of the method to call. Plain and simple
@@ -80,7 +84,7 @@ class ClaimMetadataAPI:
         if 'uri' in params and not params['uri'].startswith('lbry://'):
             params['uri'] = 'lbry://' + params['uri']
         try:
-            response = self._server.make_request(method, params=params)
+            response = await self._server.make_request(method, params=params)
             if 'error' in response:
                 raise MetadataExceptions.get(   # Raise the exception that
                     response['error']['code'],  # corresponds to error code
@@ -91,42 +95,42 @@ class ClaimMetadataAPI:
         except requests.HTTPError:
             return None
 
-    def ping(self) -> str:
+    async def ping(self) -> str:
         """ Pings the server
 
         :return: That's a surprise ;)
         """
-        return self._call_api('ping')
+        return await self._call_api('ping')
 
-    def get_claim(self, uri: str) -> ClaimMetadata:
+    async def get_claim(self, uri: str) -> ClaimMetadata:
         """ Returns the data associated with a claim.
         :param uri: A string containing a full-length permanent LBRY claim URI. The
           URI shuold be of the form lbry://[permanent URI]
         :raises InvalidClaimUriError: If the URI isn't acceptable
         :return: A Claim object if successful, otherwise None
         """
-        claim_data = self._call_api('get_claim_data', **{'uri': uri})
+        claim_data = await self._call_api('get_claim_data', **{'uri': uri})
         return ClaimMetadata.from_response(claim_data)
 
-    def upvote_claim(self, uri: str, undo: bool = False) -> int:
+    async def upvote_claim(self, uri: str, undo: bool = False) -> int:
         """ Upvotes a claim and returns the new total amount of upvotes.
 
         :param uri: A string containing a full-length permanent LBRY claim URI.
         :param undo: Specify whether or not you want to undo the upvote. False by default
         :return: The new number of upvotes on that claim
         """
-        return self._call_api('upvote_claim', **{'uri': uri, 'undo': undo})
+        return await self._call_api('upvote_claim', **{'uri': uri, 'undo': undo})
 
-    def downvote_claim(self, uri: str, undo: bool = False) -> int:
+    async def downvote_claim(self, uri: str, undo: bool = False) -> int:
         """ Downvotes a claim and returns the new amount of downvotes
 
         :param uri: A string containing a full-length permanent LBRY claim URI.
         :param undo: Specify whether or not you want to undo the downvote. False by default.
         :return: New number of downvotes on that claim
         """
-        return self._call_api('downvote_claim', **{'uri': uri, 'undo': undo})
+        return await self._call_api('downvote_claim', **{'uri': uri, 'undo': undo})
 
-    def get_claim_uri(self, claim_index: int) -> str:
+    async def get_claim_uri(self, claim_index: int) -> str:
         """ Gets the URI of a claim given its claim index.
 
         :param claim_index: An integer representing the index of the claim
@@ -134,9 +138,9 @@ class ClaimMetadataAPI:
           associated with the provided index. None if there is no URI associated
           with the given claim index
         """
-        return self._call_api('get_claim_uri', **{'claim_index': abs(claim_index)})
+        return await self._call_api('get_claim_uri', **{'claim_index': abs(claim_index)})
 
-    def get_claim_comments(self, uri: str) -> list:
+    async def get_claim_comments(self, uri: str) -> list:
         """ Returns a list of Comment objects representing all the top level
           Comments for the given claim URI
 
@@ -145,7 +149,7 @@ class ClaimMetadataAPI:
         :return: List of Comment objects, or None if the claim isn't in the
           database
         """
-        response: list = self._call_api('get_claim_comments', **{'uri': uri})
+        response: list = await self._call_api('get_claim_comments', **{'uri': uri})
         if response is not None:
             for i, comment in enumerate(response):
                 response[i] = Comment.from_response(comment)
@@ -162,7 +166,7 @@ class CommentsAPI(ClaimMetadataAPI):
         self.username = username
         super().__init__(url, username=username, **kwargs)
 
-    def _call_api(self, method: str, **params) -> any:
+    async def _call_api(self, method: str, **params) -> any:
         """ Overrides Claim API to add common routines that are general to most
         API functions
 
@@ -182,8 +186,7 @@ class CommentsAPI(ClaimMetadataAPI):
                                  + "and at least 2 characters after stripping the"
                                  + " whitespace")
 
-        return super()._call_api(method, **params)
-
+        return await super()._call_api(method, **params)
 
     @property
     def username(self) -> str:
@@ -202,7 +205,7 @@ class CommentsAPI(ClaimMetadataAPI):
             raise ValueError("Username length must be at least 2 below 128")
         self._username = new_name.strip()
 
-    def make_comment(self, uri: str, message: str) -> int:
+    async def make_comment(self, uri: str, message: str) -> int:
         """ Creates a top-level comment and returns its ID.
 
         :param uri: Permanent claim for the URI.
@@ -212,11 +215,13 @@ class CommentsAPI(ClaimMetadataAPI):
         :raises InvalidClaimUriError: If the provided URI isn't valid / acceptable
         :return: ID of the newly created comment
         """
-        return self._call_api('comment', **{'uri': uri,
-                                            'poster': self._username,
-                                            'message': message})
+        return await self._call_api('comment', **{
+            'uri': uri,
+            'poster': self._username,
+            'message': message
+        })
 
-    def reply(self, comment_id: int, message: str) -> int:
+    async def reply(self, comment_id: int, message: str) -> int:
         """ Replies to an existing comment and returns the created comment's ID
 
         :param comment_id: The ID of the comment being replied to
@@ -225,20 +230,22 @@ class CommentsAPI(ClaimMetadataAPI):
           2 and 65535
         :return: The ID of the new comment or None if the comment doesn't exist
         """
-        return self._call_api('reply', **{'parent_id': comment_id,
-                                          'poster': self._username,
-                                          'message': message})
+        return await self._call_api('reply', **{
+            'parent_id': comment_id,
+            'poster': self._username,
+            'message': message
+        })
 
-    def get_comment(self, comment_id: int) -> Comment:
+    async def get_comment(self, comment_id: int) -> Comment:
         """ Gets the data for a requested comment
 
         :param comment_id: The ID of the requested comment
         :return: Comment object if the comment exists, None otherwise
         """
-        response = self._call_api('get_comment_data', **{'comm_index': comment_id})
+        response = await self._call_api('get_comment_data', **{'comm_index': comment_id})
         return None if response is None else Comment.from_response(response)
 
-    def upvote_comment(self, comment_id: int, undo: bool = False) -> int:
+    async def upvote_comment(self, comment_id: int, undo: bool = False) -> int:
         """ Upvote a comment given its ID. If the undo flag is set to True,
         then the upvote is removed.
 
@@ -247,10 +254,12 @@ class CommentsAPI(ClaimMetadataAPI):
         :return: New number of upvotes on the comment, or None if
           it doesn't exist
         """
-        return self._call_api('upvote_comment', **{'comm_index': comment_id,
-                                                   'undo': undo})
+        return await self._call_api('upvote_comment', **{
+            'comm_index': comment_id,
+            'undo': undo
+        })
 
-    def downvote_comment(self, comment_id: int, undo: bool = False) -> int:
+    async def downvote_comment(self, comment_id: int, undo: bool = False) -> int:
         """ Downvote a comment given its ID. If the undo flag is set to True,
         then the downvote is removed.
 
@@ -259,10 +268,12 @@ class CommentsAPI(ClaimMetadataAPI):
         :return: New number of downvotes on that comment, or None if it
           doesn't exist
         """
-        return self._call_api('downvote_comment', **{'comm_index': comment_id,
-                                                     'undo': undo})
+        return await self._call_api('downvote_comment', **{
+            'comm_index': comment_id,
+            'undo': undo
+        })
 
-    def _get_comment_reply_id_list(self, comment_id: int) -> list:
+    async def _get_comment_reply_id_list(self, comment_id: int) -> list:
         """ Gets the IDs of all the comments that replied to the given
           comment ID and returns them as a list.
 
@@ -270,12 +281,11 @@ class CommentsAPI(ClaimMetadataAPI):
         :return: List of IDs that link to comment objects. or None if
           there is no comment with that given ID
         """
-        response: list = self._call_api('get_comment_replies',
+        response = await self._call_api('get_comment_replies',
                                         **{'comm_index': comment_id})
         return response
 
-    # TODO: This DEFINITELY is going to be Async
-    def _get_comment_replies(self, id_list: list) -> list:
+    async def _get_comment_replies(self, id_list: list) -> list:
         """ Given a list of Reply IDs, this will generate a list of
         corresponding comment objects
 
@@ -283,13 +293,13 @@ class CommentsAPI(ClaimMetadataAPI):
         :return: List of Comment objects with their indices corresponding to
           that of the given id_list.
         """
-        return [self.get_comment(reply_id) for reply_id in id_list]
+        return [await self.get_comment(reply_id) for reply_id in id_list]
 
-    def get_replies(self, comment: Comment) -> list:
+    async def get_replies(self, comment: Comment) -> list:
         """ Given a comment, return a list of replies as Comment objects
 
         :param comment: A `Comment` object to get replies for
         :return: List of `Comment` objects that are replying to `comment`
         """
-        reply_id_list = self._get_comment_reply_id_list(comment.id)
-        return self._get_comment_replies(reply_id_list)
+        reply_id_list = await self._get_comment_reply_id_list(comment.id)
+        return await self._get_comment_replies(reply_id_list)

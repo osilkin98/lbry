@@ -1,5 +1,7 @@
 import datetime
+import asyncio
 from typing import Union
+
 import logging
 import aiohttp
 
@@ -16,21 +18,29 @@ class MetadataClient:
     """
     __request_id: int = 0
 
+    async def __init(self, session: aiohttp.ClientSession) -> None:
+        self.session = session if session is not None else aiohttp.ClientSession(
+            headers={'Content-Type': 'application/json'}  # Sets headers here
+        )
+        self._is_connected: bool = await self.update_server_status()
+
     def __init__(self, server_url: str = None,
-                 session: aiohttp.ClientSession = None, **kwargs):
+                 session: aiohttp.ClientSession = None,
+                 event_loop: asyncio.AbstractEventLoop = None, **kwargs):
         """
         :param server_url: Location of the server. Note that in the future
           this will be multiple, however for now it's just the one.
         :param session: This is the session object to be used for making
           HTTP requests to the actual server.
+        :param event_loop: Async event loop to be used by the current thread.
+          Defaults to the current event loop, if one exists already.
         """
         self._server_url: str = server_url
         self.server_info: dict = {'last_updated': datetime.datetime.now(), 'status': None}
-        self.session = session if session is not None else aiohttp.ClientSession(
-            headers={'Content-Type': 'application/json'}  # Sets headers here
-        )
-        
-        self._is_connected: bool = self.update_server_status()
+        self.session = None  # Instantiate these here so they can be modified
+        self._is_connected = None  # and set in the self.__init function
+        self.__event_loop = asyncio.get_event_loop() if event_loop is None else event_loop
+        self.__event_loop.run_until_complete(self.__init(session))
 
     @property
     def is_connected(self) -> bool:
@@ -74,11 +84,11 @@ class MetadataClient:
         """
         return self.server_info['status']
 
-    def update_server_status(self) -> bool:
+    async def update_server_status(self) -> bool:
         """ Tries to get the server's current status
         :return: True if the request succeeded
         """
-        response = self.make_request('status')
+        response = await self.make_request('status')
         self.server_info['last_updated'] = datetime.datetime.now()
         if response is None:
             return False

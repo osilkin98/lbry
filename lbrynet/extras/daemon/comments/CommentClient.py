@@ -114,8 +114,6 @@ class MetadataClient:
                         message=response.reason,
                         headers=response.headers
                     )
-                result = await response.json()
-
                 '''
                 buffer = b""
                 async for data, end_of_http_chunk in response.content.iter_chunks():
@@ -123,6 +121,9 @@ class MetadataClient:
                     if end_of_http_chunk:
                         return decode_json(buffer.decode('utf-8'))
                 '''
+                
+                return await response.json()
+
         except aiohttp.ClientConnectionError:
             self._is_connected = False
             log.error("Failed to connect to '%s'", url)

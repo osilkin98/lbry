@@ -102,12 +102,11 @@ class MetadataClient:
           it will contain a 'result' field, and 'error' if otherwise
         """
         url = self._server_url if url is None else url
+        headers = {'Content-Type': 'application/json'}
         body = self._make_request_body(method, params=params)
-
-        async with self.session as session:
-            try:
-                log.debug("Sending POST request to '%s' for method '%s'", url, method)
-                response = await session.post(url, json=body)
+        
+        log.debug("Sending POST request to '%s' for method '%s'", url, method)
+        try:
                 self._is_connected = True
                 if not response.status < 400:
                     raise aiohttp.http.HttpProcessingError(

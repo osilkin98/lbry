@@ -107,20 +107,23 @@ class MetadataClient:
         
         log.debug("Sending POST request to '%s' for method '%s'", url, method)
         try:
-                self._is_connected = True
+            async with aiohttp.request('POST', url, headers=headers, json=body) as response:
                 if not response.status < 400:
                     raise aiohttp.http.HttpProcessingError(
                         code=response.status,
                         message=response.reason,
                         headers=response.headers
                     )
+                result = await response.json()
+
+                '''
                 buffer = b""
                 async for data, end_of_http_chunk in response.content.iter_chunks():
                     buffer += data
                     if end_of_http_chunk:
                         return decode_json(buffer.decode('utf-8'))
-                        
-            except aiohttp.ClientConnectionError:
-                self._is_connected = False
-                log.error("Failed to connect to '%s'", url)
-                return None
+                '''
+        except aiohttp.ClientConnectionError:
+            self._is_connected = False
+            log.error("Failed to connect to '%s'", url)
+            return None

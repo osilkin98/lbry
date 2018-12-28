@@ -1,5 +1,4 @@
 import logging
-from builtins import bool
 from json import dumps
 
 from typing import NamedTuple

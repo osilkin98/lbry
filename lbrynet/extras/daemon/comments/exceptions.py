@@ -6,12 +6,11 @@ class MetadataServerException(Exception):
     def __str__(self) -> str:
         return str(self.response)
 
-    def __init__(self, *args: object, **kwargs: dict) -> None:
-        response: dict = kwargs.pop('result')
-        self.request_id = response['id']
-        self.code = response['error']['code']
-        self.message = response['error']['message'] if 'message' in response['error'] else None
-        self.response = response
+    def __init__(self, result, *args, **kwargs: dict) -> None:
+        self.request_id = result['id']
+        self.code = result['error']['code']
+        self.message = result['error']['message'] if 'message' in result['error'] else None
+        self.response = result
         super().__init__(*args)
 
 

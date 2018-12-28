@@ -1,9 +1,8 @@
 import logging
-from typing import NamedTuple
+from builtins import bool
+from json import dumps
 
-import asyncio
 from typing import NamedTuple
-
 import aiohttp
 
 from lbrynet.extras.daemon.comments.CommentClient import MetadataClient
@@ -12,7 +11,7 @@ from lbrynet.extras.daemon.comments.exceptions import *
 log = logging.getLogger(__name__)
 
 
-class ClaimMetadata(NamedTuple):
+class MetadataClaim(NamedTuple):
     """ This represents a claim entry on the comment server. Please
     don't confuse this as being an actual claim object. """
 
@@ -59,10 +58,13 @@ class Comment(NamedTuple):
             upvotes=comment_data['upvotes'],
             downvotes=comment_data['downvotes']
         )
+    
+    def __str__(self) -> str:
+        return dumps({field: getattr(self, field) for field in self._fields})
+    
 
 
 class ClaimMetadataAPI:
-
     def __init__(self, url: str = None, **kwargs):
         # Todo: This IP is temporary and should not stay here forever
         self.url = 'http://18.233.233.111:2903/api' if url is None else url
@@ -106,7 +108,7 @@ class ClaimMetadataAPI:
         """
         return await self._call_api('ping')
 
-    async def get_claim(self, uri: str) -> ClaimMetadata:
+    async def get_claim(self, uri: str) -> MetadataClaim:
         """ Returns the data associated with a claim.
         :param uri: A string containing a full-length permanent LBRY claim URI. The
           URI shuold be of the form lbry://[permanent URI]
@@ -114,7 +116,7 @@ class ClaimMetadataAPI:
         :return: A Claim object if successful, otherwise None
         """
         claim_data = await self._call_api('get_claim_data', **{'uri': uri})
-        return ClaimMetadata.from_response(claim_data)
+        return MetadataClaim.from_response(claim_data)
 
     async def upvote_claim(self, uri: str, undo: bool = False) -> int:
         """ Upvotes a claim and returns the new total amount of upvotes.

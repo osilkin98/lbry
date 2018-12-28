@@ -1,7 +1,7 @@
 import logging
 from json import dumps
-
 from typing import NamedTuple
+
 import aiohttp
 
 from lbrynet.extras.daemon.comments.CommentClient import MetadataClient
@@ -61,7 +61,6 @@ class Comment(NamedTuple):
     def __str__(self) -> str:
         return dumps({field: getattr(self, field) for field in self._fields})
     
-
 
 class ClaimMetadataAPI:
     def __init__(self, url: str = None, **kwargs):

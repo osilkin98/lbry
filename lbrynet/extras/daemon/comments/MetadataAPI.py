@@ -66,7 +66,7 @@ class ClaimMetadataAPI:
     def __init__(self, url: str = None, **kwargs):
         # Todo: This IP is temporary and should not stay here forever
         self.url = 'http://18.233.233.111:2903/api' if url is None else url
-        self._server = MetadataClient(self.url)
+        self.server = MetadataClient(self.url)
         self.username = kwargs.get("username", "A Cool LBRYian")
 
     async def _call_api(self, method: str, **params) -> any:
@@ -86,7 +86,7 @@ class ClaimMetadataAPI:
         if 'uri' in params and not params['uri'].startswith('lbry://'):
             params['uri'] = 'lbry://' + params['uri']
         try:
-            response = await self._server.make_request(method, params=params)
+            response = await self.server.make_request(method, params=params)
             if 'error' in response:
                 raise MetadataExceptions.get(   # Raise the exception that
                     response['error']['code'],  # corresponds to error code

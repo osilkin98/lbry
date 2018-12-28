@@ -75,14 +75,15 @@ class MetadataClient:
         """
         return self.server_info['status']
 
-    async def update_server_status(self) -> None:
+    async def update_server_status(self) -> bool:
         """ Tries to get the server's current status
-        :return: True if the request succeeded
+        :return: Whether or not this client is connected to the comment server
         """
         response = await self.make_request('status')
         self.server_info['status'] = None if 'error' in response else response['result']
         self.server_info['last_updated'] = datetime.datetime.now()
-
+        return self._is_connected
+    
     async def make_request(self, method: str, params: dict = None,
                            url: str = None, **kwargs) -> Union[dict, None]:
         """ Asynchronously makes a request to the metadata server using the

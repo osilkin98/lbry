@@ -2,6 +2,8 @@ import logging
 from typing import NamedTuple
 
 import asyncio
+from typing import NamedTuple
+
 import aiohttp
 
 from lbrynet.extras.daemon.comments.CommentClient import MetadataClient

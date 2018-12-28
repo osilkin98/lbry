@@ -1,4 +1,5 @@
 import datetime
+from json import loads as decode_json
 import asyncio
 from typing import Union
 
@@ -18,12 +19,6 @@ class MetadataClient:
     """
     __request_id: int = 0
 
-    async def __init(self, session: aiohttp.ClientSession) -> None:
-        self.session = session if session is not None else aiohttp.ClientSession(
-            headers={'Content-Type': 'application/json'}  # Sets headers here
-        )
-        self._is_connected: bool = await self.update_server_status()
-
     def __init__(self, server_url: str = None,
                  session: aiohttp.ClientSession = None,
                  event_loop: asyncio.AbstractEventLoop = None, **kwargs):
@@ -37,10 +32,7 @@ class MetadataClient:
         """
         self._server_url: str = server_url
         self.server_info: dict = {'last_updated': datetime.datetime.now(), 'status': None}
-        self.session = None  # Instantiate these here so they can be modified
-        self._is_connected = None  # and set in the self.__init function
-        self.__event_loop = asyncio.get_event_loop() if event_loop is None else event_loop
-        self.__event_loop.run_until_complete(self.__init(session))
+        self._is_connected = None
 
     @property
     def is_connected(self) -> bool:

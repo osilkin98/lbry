@@ -81,10 +81,10 @@ class MetadataClient:
         :return: True if the request succeeded
         """
         response = await self.make_request('status')
-        self.server_info['last_updated'] = datetime.datetime.now()
         if response is None:
             return False
         self.server_info['status'] = None if 'error' in response else response['result']
+        self.server_info['last_updated'] = datetime.datetime.now()
         return True
 
     async def make_request(self, method: str, params: dict = None,

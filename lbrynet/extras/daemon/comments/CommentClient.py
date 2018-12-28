@@ -31,7 +31,7 @@ class MetadataClient:
         """
         self._server_url: str = server_url
         self.server_info: dict = {'last_updated': datetime.datetime.now(), 'status': None}
-        self._is_connected = None
+        self._is_connected = False
 
     @property
     def is_connected(self) -> bool:
@@ -75,16 +75,13 @@ class MetadataClient:
         """
         return self.server_info['status']
 
-    async def update_server_status(self) -> bool:
+    async def update_server_status(self) -> None:
         """ Tries to get the server's current status
         :return: True if the request succeeded
         """
         response = await self.make_request('status')
-        if response is None:
-            return False
         self.server_info['status'] = None if 'error' in response else response['result']
         self.server_info['last_updated'] = datetime.datetime.now()
-        return True
 
     async def make_request(self, method: str, params: dict = None,
                            url: str = None, **kwargs) -> Union[dict, None]:

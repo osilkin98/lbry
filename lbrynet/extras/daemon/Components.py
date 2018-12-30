@@ -20,6 +20,7 @@ from lbrynet.blob.EncryptedFileManager import EncryptedFileManager
 from lbrynet.blob.client.EncryptedFileDownloader import EncryptedFileSaverFactory
 from lbrynet.blob.client.EncryptedFileOptions import add_lbry_file_to_sd_identifier
 from lbrynet.dht.node import Node
+from lbrynet.extras.daemon.comments.MetadataAPI import CommentsAPI, Comment, MetadataClaim
 from lbrynet.extras.daemon.Component import Component
 from lbrynet.extras.daemon.ExchangeRateManager import ExchangeRateManager
 from lbrynet.extras.daemon.storage import SQLiteStorage
@@ -92,7 +93,9 @@ class ConfigSettings:
         else:
             log.info("Using non-default blobfiles directory: %s", conf.settings['BLOBFILES_DIR'])
             return conf.settings['BLOBFILES_DIR']
-
+    
+    ''' This isn't going to be used for now. I'm not sure where we will store the information
+        once we build a caching mechanism, but for now this should remain out
     @staticmethod
     def get_comments_dir():
         if conf.settings['COMMENTS_DIR'] == 'comments':
@@ -100,9 +103,10 @@ class ConfigSettings:
         else:
             log.info(f"Storing comments in '{conf.settings['COMMENTS_DIR']}' instead of default")
             return conf.settings['COMMENTS_DIR']
-
+    '''
+    
     @staticmethod
-    def get_comment_server() -> str:
+    def get_metadata_server_ip() -> str:
         """ Gets current comment server address.
 
         :return: location of the comment server in the form `http://address:port`
@@ -847,3 +851,20 @@ class ExchangeRateManagerComponent(Component):
     @defer.inlineCallbacks
     def stop(self):
         yield self.exchange_rate_manager.stop()
+
+
+class MetadataClientComponent(Component):
+    
+    def __init__(self, component_manager):
+        Component.__init__(component_manager)
+        self.metadata_api = CommentsAPI()
+    
+    async def start(self):
+        pass
+
+    def stop(self):
+        pass
+
+    @property
+    def component(self):
+        pass

@@ -77,6 +77,7 @@ class MetadataClient:
 
     async def update_server_status(self) -> dict:
         """ Tries to get the server's current status
+        
         :return: Whether or not this client is connected to the comment server
         """
         response = await self.make_request('status')

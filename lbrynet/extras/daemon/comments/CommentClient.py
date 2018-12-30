@@ -111,13 +111,6 @@ class MetadataClient:
                         message=response.reason,
                         headers=response.headers
                     )
-                '''
-                buffer = b""
-                async for data, end_of_http_chunk in response.content.iter_chunks():
-                    buffer += data
-                    if end_of_http_chunk:
-                        return decode_json(buffer.decode('utf-8'))
-                '''
                 
                 return await response.json()
 

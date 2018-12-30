@@ -59,11 +59,6 @@ settings_encoders = {
     '.yml': yaml.safe_dump
 }
 
-COMMENT_SERVER = {
-    'ip': 'localhost',  # TODO: Acquire a VPS and set this IP to a real one
-    'port': 2903
-}
-
 # set by CLI when the user specifies an alternate config file path
 conf_file = None
 
@@ -195,6 +190,12 @@ class Env(envparse.Env):
         return value
 
 
+COMMENT_SERVER = {
+    'ip': '18.233.233.18',
+    'port': 2903
+}
+
+
 TYPE_DEFAULT = 'default'
 TYPE_PERSISTED = 'persisted'
 TYPE_ENV = 'env'
@@ -207,8 +208,7 @@ FIXED_SETTINGS = {
     'API_ADDRESS': 'lbryapi',
     'APP_NAME': APP_NAME,
     'BLOBFILES_DIR': 'blobfiles',
-    'COMMENTS_DIR': 'comments',
-    'COMMENT_SERVER': f"http://{COMMENT_SERVER['ip']}:{COMMENT_SERVER['port']}",
+    'METADATA_SERVER': f"http://{COMMENT_SERVER['ip']}:{COMMENT_SERVER['port']}/api",
     'CRYPTSD_FILE_EXTENSION': '.cryptsd',
     'CURRENCIES': {
         'BTC': {'type': 'crypto'},

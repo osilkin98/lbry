@@ -113,7 +113,6 @@ class ConfigSettings:
         """
         return conf.settings['COMMENT_SERVER']
 
-
     @staticmethod
     def get_node_id():
         return conf.settings.node_id
@@ -856,15 +855,26 @@ class ExchangeRateManagerComponent(Component):
 class MetadataClientComponent(Component):
     
     def __init__(self, component_manager):
-        Component.__init__(component_manager)
-        self.metadata_api = CommentsAPI()
+        Component.__init__(self, component_manager)
+        self.metadata_api = CommentsAPI(
+            username=GCS('comments_username'),
+            url=GCS('METADATA_SERVER')
+        )
     
-    async def start(self):
-        pass
+    async def start(self) -> bool:
+        await self.update_status()
+        return self.metadata_api.server.is_connected
 
-    def stop(self):
-        pass
+    async def stop(self) -> None:
+        pass  # Since the API makes singular requests once, there's no connection to close
 
     @property
-    def component(self):
-        pass
+    def component(self) -> CommentsAPI:
+        return self.metadata_api
+    
+    @property
+    def get_status(self) -> dict:
+        return self.metadata_api.server.status
+    
+    async def update_status(self) -> dict:
+        return await self.metadata_api.server.update_server_status()

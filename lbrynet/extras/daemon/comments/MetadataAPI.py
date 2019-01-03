@@ -5,7 +5,7 @@ from typing import NamedTuple
 import aiohttp
 
 from lbrynet.extras.daemon.comments.CommentClient import MetadataClient
-from lbrynet.extras.daemon.comments.exceptions import *
+from lbrynet.extras.daemon.comments.exceptions import MetadataExceptions, GenericServerError
 
 log = logging.getLogger(__name__)
 
@@ -57,10 +57,10 @@ class Comment(NamedTuple):
             upvotes=comment_data['upvotes'],
             downvotes=comment_data['downvotes']
         )
-    
+
     def __str__(self) -> str:
         return dumps({field: getattr(self, field) for field in self._fields})
-    
+
 
 class ClaimMetadataAPI:
     def __init__(self, url: str = None, **kwargs):

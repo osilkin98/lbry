@@ -1,5 +1,4 @@
 import datetime
-import asyncio
 from typing import Union
 
 import logging
@@ -75,14 +74,15 @@ class MetadataClient:
 
     async def update_server_status(self) -> dict:
         """ Tries to get the server's current status
-        
+
         :return: Whether or not this client is connected to the comment server
         """
+
         response = await self.make_request('status')
         self.server_info['last_updated'] = datetime.datetime.now()
         self.server_info['status'] = None if 'error' in response else response['result']
         return self.server_info
-    
+
     async def make_request(self, method: str, params: dict = None,
                            url: str = None, **kwargs) -> Union[dict, None]:
         """ Asynchronously makes a request to the metadata server using the
@@ -100,7 +100,7 @@ class MetadataClient:
         url = self._server_url if url is None else url
         headers = {'Content-Type': 'application/json'}
         body = self._make_request_body(method, params=params)
-        
+
         log.debug("Sending POST request to '%s' for method '%s'", url, method)
         try:
             async with aiohttp.request('POST', url, headers=headers, json=body) as response:

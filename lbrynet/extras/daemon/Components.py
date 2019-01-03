@@ -21,8 +21,7 @@ from lbrynet.blob.EncryptedFileManager import EncryptedFileManager
 from lbrynet.blob.client.EncryptedFileDownloader import EncryptedFileSaverFactory
 from lbrynet.blob.client.EncryptedFileOptions import add_lbry_file_to_sd_identifier
 from lbrynet.dht.node import Node
-from lbrynet.extras.daemon.comments.MetadataAPI import CommentsAPI, Comment, MetadataClaim
-from lbrynet.extras.daemon.comments.exceptions import *
+from lbrynet.extras.daemon.comments.MetadataAPI import CommentsAPI
 from lbrynet.extras.daemon.Component import Component
 from lbrynet.extras.daemon.ExchangeRateManager import ExchangeRateManager
 from lbrynet.extras.daemon.storage import SQLiteStorage
@@ -751,8 +750,7 @@ class MetadataClientComponent(Component):
                       e.code, e.message)
             log.debug("Metadata Server response headers: %s", e.headers)
             log.warning("Failed to start MetadataClient")
-        finally:
-            return self.metadata_api.server.is_connected
+        return self.metadata_api.server.is_connected
 
     async def stop(self) -> None:
         pass  # Since the API makes singular requests once, there's no connection to close

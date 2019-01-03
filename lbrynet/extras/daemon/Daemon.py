@@ -19,6 +19,7 @@ from lbrynet.extras.reflector import reupload
 from lbrynet.extras.daemon.Components import d2f
 from lbrynet.extras.daemon.Components import WALLET_COMPONENT, DATABASE_COMPONENT, DHT_COMPONENT, BLOB_COMPONENT
 from lbrynet.extras.daemon.Components import FILE_MANAGER_COMPONENT, RATE_LIMITER_COMPONENT
+from lbrynet.extras.daemon.Components import CLAIM_METADATA_COMPONENT
 from lbrynet.extras.daemon.Components import EXCHANGE_RATE_MANAGER_COMPONENT, PAYMENT_RATE_COMPONENT, UPNP_COMPONENT
 from lbrynet.extras.daemon.ComponentManager import RequiredCondition
 from lbrynet.extras.daemon.Downloader import GetStream
@@ -44,6 +45,7 @@ from lbrynet.extras.daemon.ComponentManager import ComponentManager
 from lbrynet.extras.looping_call_manager import LoopingCallManager
 from lbrynet.p2p.Error import ComponentsNotStarted, ComponentStartConditionNotMet
 from lbrynet.extras.daemon.json_response_encoder import JSONResponseEncoder
+from lbrynet.extras.daemon.comments.MetadataAPI import CommentsAPI
 
 import asyncio
 import logging
@@ -349,7 +351,8 @@ class Daemon(metaclass=JSONRPCServerType):
         PAYMENT_RATE_COMPONENT: "payment_rate_manager",
         RATE_LIMITER_COMPONENT: "rate_limiter",
         BLOB_COMPONENT: "blob_manager",
-        UPNP_COMPONENT: "upnp"
+        UPNP_COMPONENT: "upnp",
+        CLAIM_METADATA_COMPONENT: 'metadata_manager'
     }
 
     allowed_during_startup = []
@@ -394,6 +397,7 @@ class Daemon(metaclass=JSONRPCServerType):
         self.rate_limiter = None
         self.blob_manager = None
         self.upnp = None
+        self.metadata_manager: CommentsAPI = None
 
         # TODO: delete this
         self.streams = {}
@@ -505,6 +509,11 @@ class Daemon(metaclass=JSONRPCServerType):
         result = fn(self, *_args, **_kwargs)
         if asyncio.iscoroutine(result):
             result = await result
+
+        if type(result) is dict:
+            for key, value in result.items():
+                if repr(type(value)) == "<class 'coroutine'>":
+                    result[key] = await value   # await here so JSON can process
 
         return web.Response(
             text=jsonrpc_dumps_pretty(result, ledger=self.ledger),
@@ -1942,6 +1951,87 @@ class Daemon(metaclass=JSONRPCServerType):
             return metadata
         except UnknownNameError:
             log.info('Name %s is not known', name)
+
+    @requires(CLAIM_METADATA_COMPONENT)
+    async def jsonrpc_claim_metadata(self, name) -> dict:
+        """
+        Get the Extra Metadata for the given LBRY Name. Likes, Dislikes, Comments, etc.
+        
+        Usage:
+            claim_metadata (<name> | --name=<name>)
+            
+        Options:
+            --name=<name> : (str) The name of the Claim to fetch Metadata of
+
+        Returns:
+            (dict)  Claim's Metadata as a dictionary from name claim. None if the
+                    name isn't resolvable. If it doesn't exist in the database, then
+                    it will be added to it.
+
+        """
+
+        """
+        assert (name is not None or url is not None) and not (name is not None and url is not None)
+        if name is not None:
+            lbry_claim_data = (await self.jsonrpc_resolve_name(name))[name]
+            if 'claim' in lbry_claim_data:
+                url = lbry_claim_data['claim']['permanent_url']
+            else:
+                return {
+                    name: {
+                        'error': 'Only Content Claims are supported at the moment. Check back soon ;^)'
+                    }
+                }
+        """
+        try:
+            lbry_claim = await self.jsonrpc_resolve_name(name=name)
+        except URIParseError:
+            return {'error': 'Invalid Claim URI'}
+        
+        if 'claim' in lbry_claim:
+            claim = await self.metadata_manager.get_claim(uri=lbry_claim['claim']['permanent_url'])
+            if claim is None:
+                return {'error': 'That claim does not exist'}
+            return {field: getattr(claim, field) for field in claim._fields}
+        else:
+            return {'error': 'Only Content Claims are Currently Supported'}
+    
+    @requires(CLAIM_METADATA_COMPONENT)
+    async def jsonrpc_get_comments(self, name: str, tlc_only: bool = True) -> dict:
+        """
+        Gets the comments from the given Claim Name
+        
+        Usage:
+            get_comments [ <name> | --name=<name>]
+                         [ <tlc_only> | --tlc_only=<tlc_only> ]
+        
+        Options:
+            --name=<name>           : (str) Name of the claim we're fetching
+                                      the comments from
+            --tlc_only=<tlc_only>   : (bool) Flag to indicate whether or not we want
+                                      to see the top level comments or not. On by default
+        
+        Returns:
+            (dict)  Returns a dict containing all the comments associated with a given
+                    claim name, if resolvable. If not then an error message is returned.
+        
+        """
+        try:
+            lbry_metadata = await self.jsonrpc_claim_metadata(name=name)
+        except URIParseError:
+            return {'error': 'Invalid Claim URI'}
+        
+        if 'error' not in lbry_metadata:
+            comments = await self.metadata_manager.get_claim_comments(lbry_metadata['permanent_uri'])
+            if comments is not None:
+                result = {'comments': []}
+                for comment in comments:
+                    result['comments'].append(json.loads(str(comment)))
+                return result
+            else:
+                return {'error': f'No Comments Associated with the claim name {name} were found'}
+        else:
+            return lbry_metadata
 
     @requires(WALLET_COMPONENT)
     async def jsonrpc_claim_show(self, txid=None, nout=None, claim_id=None):

@@ -32,6 +32,10 @@ class MetadataClaim(NamedTuple):
             claim_data['downvotes']   # that normal people can read
         )
 
+    def get_dict(self):
+        """ To have the class return a normal dict rather than an Ordered Dict """
+        return dict(self._asdict())
+
 
 class Comment(NamedTuple):
     id: int
@@ -60,6 +64,10 @@ class Comment(NamedTuple):
 
     def __str__(self) -> str:
         return dumps({field: getattr(self, field) for field in self._fields})
+
+    def get_dict(self):
+        """ To have the class return a normal dict rather than an Ordered Dict """
+        return dict(self._asdict())
 
 
 class ClaimMetadataAPI:
@@ -108,6 +116,7 @@ class ClaimMetadataAPI:
 
     async def get_claim(self, uri: str) -> MetadataClaim:
         """ Returns the data associated with a claim.
+
         :param uri: A string containing a full-length permanent LBRY claim URI. The
           URI shuold be of the form lbry://[permanent URI]
         :raises InvalidClaimUriError: If the URI isn't acceptable

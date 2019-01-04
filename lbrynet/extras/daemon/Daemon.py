@@ -46,6 +46,7 @@ from lbrynet.extras.looping_call_manager import LoopingCallManager
 from lbrynet.p2p.Error import ComponentsNotStarted, ComponentStartConditionNotMet
 from lbrynet.extras.daemon.json_response_encoder import JSONResponseEncoder
 from lbrynet.extras.daemon.comments.MetadataAPI import CommentsAPI
+from lbrynet.extras.daemon.comments.exceptions import InvalidClaimUriError
 
 import asyncio
 import logging
@@ -1952,16 +1953,19 @@ class Daemon(metaclass=JSONRPCServerType):
         except UnknownNameError:
             log.info('Name %s is not known', name)
 
-    @requires(CLAIM_METADATA_COMPONENT)
-    async def jsonrpc_claim_metadata(self, name) -> dict:
+    @requires(CLAIM_METADATA_COMPONENT, WALLET_COMPONENT)
+    async def jsonrpc_claim_metadata(self, name: str = None, permanent_uri: str = None):
         """
         Get the Extra Metadata for the given LBRY Name. Likes, Dislikes, Comments, etc.
-        
+        Either the name or the permanent_uri must be provided, but not both. If both can be provided,
+        then you should provide the permanent_uri, since the database uses the claim's URIs as keys
+
         Usage:
-            claim_metadata (<name> | --name=<name>)
-            
+            claim_metadata [<name> | --name=<name>] [<permanent_uri> | --permanent_uri=<permanent_uri>]
+
         Options:
-            --name=<name> : (str) The name of the Claim to fetch Metadata of
+            --name=<name>                   : (str) The name of the Claim to fetch Metadata of
+            --permanent_uri=<permanent_uri> : (str) The permanent URI of the claim to fetch methadata of
 
         Returns:
             (dict)  Claim's Metadata as a dictionary from name claim. None if the
@@ -1969,58 +1973,53 @@ class Daemon(metaclass=JSONRPCServerType):
                     it will be added to it.
 
         """
+        if name is None and permanent_uri is None:
+            log.info('No Parameters were Given to jsonrpc_claim_metadata')
+            return None
 
-        """
-        assert (name is not None or url is not None) and not (name is not None and url is not None)
-        if name is not None:
-            lbry_claim_data = (await self.jsonrpc_resolve_name(name))[name]
-            if 'claim' in lbry_claim_data:
-                url = lbry_claim_data['claim']['permanent_url']
+        if permanent_uri is None:
+            result = await self.jsonrpc_resolve(uri=name)
+            if 'claim' in result[name]:
+                permanent_uri = result[name]['claim']['permanent_url']
+            elif 'error' in result[name]:
+                log.info('When trying to resolve %s, got error: %s', name, result[name]['error'])
             else:
-                return {
-                    name: {
-                        'error': 'Only Content Claims are supported at the moment. Check back soon ;^)'
-                    }
-                }
-        """
-        try:
-            lbry_claim = await self.jsonrpc_resolve_name(name=name)
-        except URIParseError:
-            return {'error': 'Invalid Claim URI'}
-        
-        if 'claim' in lbry_claim:
-            claim = await self.metadata_manager.get_claim(uri=lbry_claim['claim']['permanent_url'])
-            if claim is None:
-                return {'error': 'That claim does not exist'}
-            return {field: getattr(claim, field) for field in claim._fields}
-        else:
-            return {'error': 'Only Content Claims are Currently Supported'}
-    
+                log.info('Claim Type for URI %s is not supported', name)
+        # At this point the URI is either set or we got an error somwehere
+        if permanent_uri is not None:
+            try:
+                claim_user_info = await self.metadata_manager.get_claim(uri=permanent_uri)
+                return claim_user_info.get_dict()
+            except InvalidClaimUriError as e:
+                log.debug('Request %i to Metadata Server failed due to invalid URI passed in: %s',
+                          e.request_id, permanent_uri)
+                return {'error': e.response['error']}
+
     @requires(CLAIM_METADATA_COMPONENT)
     async def jsonrpc_get_comments(self, name: str, tlc_only: bool = True) -> dict:
         """
         Gets the comments from the given Claim Name
-        
+
         Usage:
             get_comments [ <name> | --name=<name>]
                          [ <tlc_only> | --tlc_only=<tlc_only> ]
-        
+
         Options:
             --name=<name>           : (str) Name of the claim we're fetching
                                       the comments from
             --tlc_only=<tlc_only>   : (bool) Flag to indicate whether or not we want
                                       to see the top level comments or not. On by default
-        
+
         Returns:
             (dict)  Returns a dict containing all the comments associated with a given
                     claim name, if resolvable. If not then an error message is returned.
-        
-        """
+
+"""
         try:
             lbry_metadata = await self.jsonrpc_claim_metadata(name=name)
         except URIParseError:
             return {'error': 'Invalid Claim URI'}
-        
+
         if 'error' not in lbry_metadata:
             comments = await self.metadata_manager.get_claim_comments(lbry_metadata['permanent_uri'])
             if comments is not None:

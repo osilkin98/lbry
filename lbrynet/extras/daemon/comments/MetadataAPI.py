@@ -1,6 +1,4 @@
 import logging
-from json import dumps
-from typing import NamedTuple
 
 import aiohttp
 
@@ -10,64 +8,34 @@ from lbrynet.extras.daemon.comments.exceptions import MetadataExceptions, Generi
 log = logging.getLogger(__name__)
 
 
-class MetadataClaim(NamedTuple):
-    """ This represents a claim entry on the comment server. Please
-    don't confuse this as being an actual claim object. """
-
-    claim_index: int
-    permanent_uri: str
-    time_added: int
-    upvotes: int
-    downvotes: int
-
-    @classmethod
-    def from_response(cls: type, claim_data: dict):
-        if claim_data is None:
-            return cls(0, None, 0, 0, 0)
-        return cls(
-            claim_data['claim_index'],  # This ugly block is needed
-            claim_data['lbry_perm_uri'],  # in order to rename the
-            claim_data['add_time'],  # variable names we received from
-            claim_data['upvotes'],  # the server into good ones
-            claim_data['downvotes']   # that normal people can read
-        )
-
-    def get_dict(self):
-        """ To have the class return a normal dict rather than an Ordered Dict """
-        return dict(self._asdict())
+def rename_key(data: dict, old: str, new: str, default: any = None) -> None:
+    data[new] = data.get(old, default)
+    if old in data:
+        del data[old]
 
 
-class Comment(NamedTuple):
-    id: int
-    claim_index: int
-    author: str
-    parent_index: int
-    time_created: int
-    body: str
-    upvotes: int
-    downvotes: int
+def correct_claim(claim_data: dict, uri: str) -> dict:
+    if claim_data is None:
+        claim_data = {
+            'claim_index': -1,
+            'permanent_uri': uri,
+            'time_added': 0,
+            'upvotes': 0,
+            'downvotes': 0
+        }
+    else:
+        rename_key(claim_data, 'lbry_perm_uri', 'permanent_uri')
+        rename_key(claim_data, 'add_time', 'time_added')
+    return claim_data
 
-    @classmethod
-    def from_response(cls: type, comment_data: dict):
-        if comment_data is None:
-            return None
-        return cls(
-            id=comment_data['comm_index'],
-            claim_index=comment_data['claim_index'],
-            author=comment_data['poster_name'],
-            parent_index=comment_data.get('parent_com', None),  # parent_com might be null
-            time_created=comment_data['post_time'],
-            body=comment_data['message'],
-            upvotes=comment_data['upvotes'],
-            downvotes=comment_data['downvotes']
-        )
 
-    def __str__(self) -> str:
-        return dumps({field: getattr(self, field) for field in self._fields})
 
-    def get_dict(self):
-        """ To have the class return a normal dict rather than an Ordered Dict """
-        return dict(self._asdict())
+def correct_comment(comment_data: dict) -> None:
+    rename_key(comment_data, 'comm_index', 'id')
+    rename_key(comment_data, 'poster_name', 'author')
+    rename_key(comment_data, 'message', 'body')
+    rename_key(comment_data, 'post_time', 'time_created')
+    rename_key(comment_data, 'parent_com', 'parent_index')
 
 
 class ClaimMetadataAPI:
@@ -114,7 +82,7 @@ class ClaimMetadataAPI:
         """
         return await self._call_api('ping')
 
-    async def get_claim(self, uri: str) -> MetadataClaim:
+    async def get_claim(self, uri: str) -> dict:
         """ Returns the data associated with a claim. If the Claim
         URI isn't in the database, then there is no user data that is being stored
         in the server. If this is the case, the claim index will just be -1 to
@@ -124,12 +92,10 @@ class ClaimMetadataAPI:
         :param uri: A string containing a full-length permanent LBRY claim URI. The
           URI shuold be of the form lbry://[permanent URI]
         :raises InvalidClaimUriError: If the URI isn't acceptable
-        :return: A Claim Object that contains the claim's metadata.
+        :return: `dict` Representing the claim's metadata.
         """
         claim_data = await self._call_api('get_claim_data', **{'uri': uri})
-        if claim_data is None:  # If the data is None then there is no user data made yet
-            return MetadataClaim(-1, uri, 0, 0, 0)
-        return MetadataClaim.from_response(claim_data)
+        return correct_claim(claim_data, uri)
 
     async def upvote_claim(self, uri: str, undo: bool = False) -> int:
         """ Upvotes a claim and returns the new total amount of upvotes.
@@ -168,11 +134,11 @@ class ClaimMetadataAPI:
         :return: List of Comment objects, or None if the claim isn't in the
           database
         """
-        response: list = await self._call_api('get_claim_comments', **{'uri': uri})
-        if response is not None:
-            for i, comment in enumerate(response):
-                response[i] = Comment.from_response(comment)
-        return response
+        comments: list = await self._call_api('get_claim_comments', **{'uri': uri})
+        if comments is not None:
+            for comment in comments:
+                correct_comment(comment)
+        return comments
 
 
 class CommentsAPI(ClaimMetadataAPI):
@@ -255,14 +221,16 @@ class CommentsAPI(ClaimMetadataAPI):
             'message': message
         })
 
-    async def get_comment(self, comment_id: int) -> Comment:
+    async def get_comment(self, comment_id: int) -> dict:
         """ Gets the data for a requested comment
 
         :param comment_id: The ID of the requested comment
         :return: Comment object if the comment exists, None otherwise
         """
         response = await self._call_api('get_comment_data', **{'comm_index': comment_id})
-        return None if response is None else Comment.from_response(response)
+        if response is not None:
+            correct_comment(response)
+        return response
 
     async def upvote_comment(self, comment_id: int, undo: bool = False) -> int:
         """ Upvote a comment given its ID. If the undo flag is set to True,
@@ -314,11 +282,11 @@ class CommentsAPI(ClaimMetadataAPI):
         """
         return [await self.get_comment(reply_id) for reply_id in id_list]
 
-    async def get_replies(self, comment: Comment) -> list:
+    async def get_replies(self, comment: dict) -> list:
         """ Given a comment, return a list of replies as Comment objects
 
         :param comment: A `Comment` object to get replies for
         :return: List of `Comment` objects that are replying to `comment`
         """
-        reply_id_list = await self._get_comment_reply_id_list(comment.id)
+        reply_id_list = await self._get_comment_reply_id_list(comment['id'])
         return await self._get_comment_replies(reply_id_list)

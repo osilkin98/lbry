@@ -1985,11 +1985,11 @@ class Daemon(metaclass=JSONRPCServerType):
                 log.info('When trying to resolve %s, got error: %s', name, result[name]['error'])
             else:
                 log.info('Claim Type for URI %s is not supported', name)
-        # At this point the URI is either set or we got an error somwehere
+        # At this point the URI is either set or we got an error somewhere
         if permanent_uri is not None:
             try:
                 claim_user_info = await self.metadata_manager.get_claim(uri=permanent_uri)
-                return claim_user_info.get_dict()
+                return claim_user_info
             except InvalidClaimUriError as e:
                 log.debug('Request %i to Metadata Server failed due to invalid URI passed in: %s',
                           e.request_id, permanent_uri)

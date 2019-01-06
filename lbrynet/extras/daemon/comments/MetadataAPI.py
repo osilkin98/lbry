@@ -16,14 +16,14 @@ class MetadataClaim(NamedTuple):
 
     claim_index: int
     permanent_uri: str
-    time_created: int
+    time_added: int
     upvotes: int
     downvotes: int
 
     @classmethod
     def from_response(cls: type, claim_data: dict):
         if claim_data is None:
-            return None
+            return cls(0, None, 0, 0, 0)
         return cls(
             claim_data['claim_index'],  # This ugly block is needed
             claim_data['lbry_perm_uri'],  # in order to rename the
@@ -115,14 +115,20 @@ class ClaimMetadataAPI:
         return await self._call_api('ping')
 
     async def get_claim(self, uri: str) -> MetadataClaim:
-        """ Returns the data associated with a claim.
+        """ Returns the data associated with a claim. If the Claim
+        URI isn't in the database, then there is no user data that is being stored
+        in the server. If this is the case, the claim index will just be -1 to
+        indicate that it isn't in the database yet. This does not mean that it isn't
+        on LBRY, just that there hasn't been any recorded data worth storing.
 
         :param uri: A string containing a full-length permanent LBRY claim URI. The
           URI shuold be of the form lbry://[permanent URI]
         :raises InvalidClaimUriError: If the URI isn't acceptable
-        :return: A Claim object if successful, otherwise None
+        :return: A Claim Object that contains the claim's metadata.
         """
         claim_data = await self._call_api('get_claim_data', **{'uri': uri})
+        if claim_data is None:  # If the data is None then there is no user data made yet
+            return MetadataClaim(-1, uri, 0, 0, 0)
         return MetadataClaim.from_response(claim_data)
 
     async def upvote_claim(self, uri: str, undo: bool = False) -> int:

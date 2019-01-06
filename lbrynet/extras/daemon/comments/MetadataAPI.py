@@ -305,7 +305,7 @@ class CommentsAPI(ClaimMetadataAPI):
             current_comment: dict = comment_stack.pop()
             if current_comment['parent_index'] is None:  # -1 indicates a null pointer
                 comment_tree.append(current_comment)
-            current_comment['replies'] = await self.get_replies(current_comment)
+            current_comment['replies'] = await self.get_replies(current_comment['id'])
             comment_stack += current_comment['replies']
         return comment_tree
 

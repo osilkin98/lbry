@@ -2069,6 +2069,48 @@ class Daemon(metaclass=JSONRPCServerType):
                 log.info("The server raised an error for the given uri %s with the "
                          "following message: %s", uri, error.message)
 
+    @requires(CLAIM_METADATA_COMPONENT)
+    async def jsonrpc_reply_to_comment(self, comment_id: int, message: str):
+        """
+        Reply to a comment with the given comment ID. The comment ID is acquired by
+        using the get_comments command to get the comments for the given claim
+
+        Usage:
+            reply_to_comment ( <comment_id> | --id=<comment_id> )
+                                     ( <message> | --message=<message> )
+
+        Options:
+            --id=<comment_id>    : (int) The ID of the comment to reply to.
+            --message=<message>  : (str) The message to reply to the comment with
+
+        Returns:
+            (dict) The Comment you just made
+        """
+        try:
+            reply_id = await self.metadata_manager.reply(comment_id, message)
+            return await self.metadata_manager.get_comment(reply_id)
+        except ValueError:
+            log.info("User tried to make a comment of length %i", len(message))
+
+    @requires(CLAIM_METADATA_COMPONENT)
+    async def jsonrpc_get_comment_thread(self, comment_id: int) -> dict:
+        """
+        Gets the comment thread from a given Comment ID. This returns a dict
+        of the parent comment and all of its children replies
+
+        Usage:
+            get_comment_thread ( <comment_id> | --comment_id=<comment_id> )
+
+        Options:
+            --comment_id=<comment_id>  : (int) Parent comment of which to retrieve the
+                                         rest of the child comments.
+
+        Returns:
+            (dict) The parent comment and all of its replies in the 'replies' field.
+                   If there aren't any, null is returned.
+        """
+        return await self.metadata_manager.build_comment_tree(comment_id)
+
     @requires(WALLET_COMPONENT)
     async def jsonrpc_claim_show(self, txid=None, nout=None, claim_id=None):
         """

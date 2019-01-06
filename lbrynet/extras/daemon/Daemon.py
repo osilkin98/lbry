@@ -1978,9 +1978,9 @@ class Daemon(metaclass=JSONRPCServerType):
             return None
 
         if permanent_uri is None:
-            result = await self.jsonrpc_resolve(uri=name)
+            result: dict = await self.jsonrpc_resolve(uri=name)
             if 'claim' in result[name]:
-                permanent_uri = result[name]['claim']['permanent_url']
+                permanent_uri: str = result[name]['claim']['permanent_url']
             elif 'error' in result[name]:
                 log.info('When trying to resolve %s, got error: %s', name, result[name]['error'])
             else:
@@ -1996,7 +1996,7 @@ class Daemon(metaclass=JSONRPCServerType):
                 return {'error': e.response['error']}
 
     @requires(CLAIM_METADATA_COMPONENT)
-    async def jsonrpc_get_comments(self, name: str, tlc_only: bool = True) -> dict:
+    async def jsonrpc_get_comments(self, name: str = None, uri: str = None, tlc_only: bool = True) -> dict:
         """
         Gets the comments from the given Claim Name
 

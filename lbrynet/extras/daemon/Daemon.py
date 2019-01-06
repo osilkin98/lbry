@@ -2115,8 +2115,6 @@ class Daemon(metaclass=JSONRPCServerType):
         """
         return await self.metadata_manager.build_comment_tree(comment_id)
 
-    @requires(CLAIM_METADATA_COMPONENT)
-
     @requires(WALLET_COMPONENT)
     async def jsonrpc_claim_show(self, txid=None, nout=None, claim_id=None):
         """

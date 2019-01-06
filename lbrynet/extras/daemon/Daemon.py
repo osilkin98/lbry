@@ -1961,7 +1961,7 @@ class Daemon(metaclass=JSONRPCServerType):
         then you should provide the permanent_uri, since the database uses the claim's URIs as keys
 
         Usage:
-            claim_metadata [<name> | --name=<name>] [<permanent_uri> | --permanent_uri=<permanent_uri>]
+            claim_metadata [ <name> | --name=<name>] [<permanent_uri> | --permanent_uri=<permanent_uri>]
 
         Options:
             --name=<name>                   : (str) The name of the Claim to fetch Metadata of
@@ -1997,36 +1997,77 @@ class Daemon(metaclass=JSONRPCServerType):
 
     @requires(CLAIM_METADATA_COMPONENT)
     async def jsonrpc_get_comments(self, name: str = None, uri: str = None,
-                                   tlc: bool = False) -> dict:
+                                   parents_only: bool = False) -> list:
         """
         Gets the comments from the given Claim Name or the URI.
         If both the name and the uri are given, then we just use the URI for
         lookup.
 
         Usage:
-            get_comments [--tlc] [ <name> | --name=<name>] [ <uri> | --<uri>=<uri> ]
+            get_comments [ <name> | --name=<name> ] [ <uri> | --uri=<uri> ] [--parents_only]
 
         Options:
-            --name=<name>           : (str) Name of the claim we're fetching
-                                      the comments from to be resolved
-            --uri=<uri>             : (str) The permanent URI of the claim whose comments
-                                      to retrieve.
-            --tlc=<tlc>             : (bool) Flag to indicate whether or not we want
-                                      to see the top level comments or not. False by default
+            --name=<name>   : (str) Name of the claim we're fetching
+                             the comments from to be resolved
+            --uri=<uri>     : (str) The permanent URI of the claim whose comments
+                             to retrieve.
+            --parents_only  : (bool) Flag to indicate whether or not we want
+                             to see the top level comments or not. False by default
 
         Returns:
             (dict)  Returns a dict containing all the comments associated with a given
                     claim name, if resolvable. If not then an error message is returned.
         """
-        if name is not None and uri is not None:
-            claim_info: dict = self.jsonrpc_claim_metadata(name=name, permanent_uri=uri)
-            if 'error' not in claim_info:
-                uri = claim_info['permanent_uri']
         if uri is not None:
-            if tlc:
-                comment_tree = self.metadata_manager.get_claim_comments(uri)
+            pass
+        elif name is not None:
+            claim_info: dict = await self.jsonrpc_claim_metadata(name=name, permanent_uri=uri)
+            if claim_info is not None and 'error' not in claim_info:
+                uri = claim_info['permanent_uri']
+
+        if uri is not None:
+            if parents_only:
+                comment_tree = await self.metadata_manager.get_claim_comments(uri)
             else:
-                comment_tree = self.metadata_manager.build_claim_comment_tree(uri)
+                comment_tree = await self.metadata_manager.build_claim_comment_tree(uri)
+            return comment_tree
+
+    @requires(CLAIM_METADATA_COMPONENT)
+    async def jsonrpc_make_comment(self, message, name: str = None, uri: str = None):
+        """
+        Makes a comment at the given Claim Name or URI. The username used to make the comment
+        can be modified in the adjustable settings.
+
+        The comment string must be between 2 and 2000 characters long
+
+        Usage:
+            make_comment ( <message> | --message=<message> ) [ <name> | --name=<name> ]
+                         [ <uri> | --uri=<uri> ]
+
+        Options:
+            --message=<message>  : (str) String to be posted as the comment
+            --name=<name>        : (str) Name of the claim to be resolved and have a comment made on
+            --uri=<uri>          : (str) Permanent URI of the claim on which to make the comment on
+
+        Returns:
+            (dict) Comment object if successfully made
+        """
+        if uri is not None:
+            pass
+        elif name is not None:
+            claim_info: dict = await self.jsonrpc_claim_metadata(name, uri)
+            if claim_info is not None and 'error' not in claim_info:
+                uri = claim_info['permanent_uri']
+
+        if uri is not None:
+            try:
+                comment_id = await self.metadata_manager.make_comment(uri, message)
+                return await self.metadata_manager.get_comment(comment_id)
+            except ValueError:
+                log.info("User tried to make a comment of length %i", len(message))
+            except InvalidClaimUriError as error:
+                log.info("The server raised an error for the given uri %s with the "
+                         "following message: %s", uri, error.message)
 
     @requires(WALLET_COMPONENT)
     async def jsonrpc_claim_show(self, txid=None, nout=None, claim_id=None):

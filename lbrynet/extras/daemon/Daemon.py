@@ -1173,6 +1173,7 @@ class Daemon(metaclass=JSONRPCServerType):
                          [--peer_search_timeout=<peer_search_timeout>]
                          [--sd_download_timeout=<sd_download_timeout>]
                          [--auto_renew_claim_height_delta=<auto_renew_claim_height_delta>]
+                         [--comments_username=<comments_username>]
 
         Options:
             --download_directory=<download_directory>  : (str) path of download directory
@@ -1199,7 +1200,9 @@ class Daemon(metaclass=JSONRPCServerType):
                 claims set to expire within this many blocks will be
                 automatically renewed after startup (if set to 0, renews
                 will not be made automatically)
-
+            --comments_username=<comments_username>  : (str) 'A Cool LBRYian'
+                Username displayed when making comments and replies on Content Claims.
+                Must be between 2 and 127 characters long.
 
         Returns:
             (dict) Updated dictionary of daemon settings
@@ -1222,7 +1225,8 @@ class Daemon(metaclass=JSONRPCServerType):
             'disable_max_key_fee': bool,
             'peer_search_timeout': int,
             'sd_download_timeout': int,
-            'auto_renew_claim_height_delta': int
+            'auto_renew_claim_height_delta': int,
+            'comments_username': str
         }
 
         for key, setting_type in setting_types.items():
@@ -2110,6 +2114,8 @@ class Daemon(metaclass=JSONRPCServerType):
                    If there aren't any, null is returned.
         """
         return await self.metadata_manager.build_comment_tree(comment_id)
+
+    @requires(CLAIM_METADATA_COMPONENT)
 
     @requires(WALLET_COMPONENT)
     async def jsonrpc_claim_show(self, txid=None, nout=None, claim_id=None):

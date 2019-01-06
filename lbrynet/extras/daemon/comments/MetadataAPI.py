@@ -282,13 +282,13 @@ class CommentsAPI(ClaimMetadataAPI):
         """
         return [await self.get_comment(reply_id) for reply_id in id_list]
 
-    async def get_replies(self, comment: dict) -> list:
+    async def get_replies(self, comment_id: int) -> list:
         """ Given a comment, return a list of replies as Comment objects
 
-        :param comment: A `Comment` object to get replies for
+        :param comment_id: The ID of the comment to get replies from
         :return: List of `Comment` objects that are replying to `comment`
         """
-        reply_id_list = await self._get_comment_reply_id_list(comment['id'])
+        reply_id_list = await self._get_comment_reply_id_list(comment_id)
         return await self._get_comment_replies(reply_id_list)
 
     async def build_claim_comment_tree(self, uri: str) -> list:
@@ -308,3 +308,19 @@ class CommentsAPI(ClaimMetadataAPI):
             current_comment['replies'] = await self.get_replies(current_comment)
             comment_stack += current_comment['replies']
         return comment_tree
+
+    async def build_comment_tree(self, comment_id: int) -> dict:
+        """ Builds a comment tree using the comment id as the parent and
+        all of its children. None if the comment doesn't exist.
+
+        :param comment_id: The ID of the comment to build the tree of
+        :return: The comment dict along with all of its children
+        """
+        parent_comment = await self.get_comment(comment_id)
+        if parent_comment is not None:
+            reply_stack = [parent_comment]
+            while len(reply_stack) > 0:
+                parent = reply_stack.pop()
+                parent['replies'] = await self.get_replies(parent['id'])
+                reply_stack += parent['replies']
+        return parent_comment

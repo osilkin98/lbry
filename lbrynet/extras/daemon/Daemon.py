@@ -1996,41 +1996,37 @@ class Daemon(metaclass=JSONRPCServerType):
                 return {'error': e.response['error']}
 
     @requires(CLAIM_METADATA_COMPONENT)
-    async def jsonrpc_get_comments(self, name: str = None, uri: str = None, tlc_only: bool = True) -> dict:
+    async def jsonrpc_get_comments(self, name: str = None, uri: str = None,
+                                   tlc: bool = False) -> dict:
         """
-        Gets the comments from the given Claim Name
+        Gets the comments from the given Claim Name or the URI.
+        If both the name and the uri are given, then we just use the URI for
+        lookup.
 
         Usage:
-            get_comments [ <name> | --name=<name>]
-                         [ <tlc_only> | --tlc_only=<tlc_only> ]
+            get_comments [--tlc] [ <name> | --name=<name>] [ <uri> | --<uri>=<uri> ]
 
         Options:
             --name=<name>           : (str) Name of the claim we're fetching
-                                      the comments from
-            --tlc_only=<tlc_only>   : (bool) Flag to indicate whether or not we want
-                                      to see the top level comments or not. On by default
+                                      the comments from to be resolved
+            --uri=<uri>             : (str) The permanent URI of the claim whose comments
+                                      to retrieve.
+            --tlc=<tlc>             : (bool) Flag to indicate whether or not we want
+                                      to see the top level comments or not. False by default
 
         Returns:
             (dict)  Returns a dict containing all the comments associated with a given
                     claim name, if resolvable. If not then an error message is returned.
-
-"""
-        try:
-            lbry_metadata = await self.jsonrpc_claim_metadata(name=name)
-        except URIParseError:
-            return {'error': 'Invalid Claim URI'}
-
-        if 'error' not in lbry_metadata:
-            comments = await self.metadata_manager.get_claim_comments(lbry_metadata['permanent_uri'])
-            if comments is not None:
-                result = {'comments': []}
-                for comment in comments:
-                    result['comments'].append(json.loads(str(comment)))
-                return result
+        """
+        if name is not None and uri is not None:
+            claim_info: dict = self.jsonrpc_claim_metadata(name=name, permanent_uri=uri)
+            if 'error' not in claim_info:
+                uri = claim_info['permanent_uri']
+        if uri is not None:
+            if tlc:
+                comment_tree = self.metadata_manager.get_claim_comments(uri)
             else:
-                return {'error': f'No Comments Associated with the claim name {name} were found'}
-        else:
-            return lbry_metadata
+                comment_tree = self.metadata_manager.build_claim_comment_tree(uri)
 
     @requires(WALLET_COMPONENT)
     async def jsonrpc_claim_show(self, txid=None, nout=None, claim_id=None):

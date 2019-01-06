@@ -290,3 +290,21 @@ class CommentsAPI(ClaimMetadataAPI):
         """
         reply_id_list = await self._get_comment_reply_id_list(comment['id'])
         return await self._get_comment_replies(reply_id_list)
+
+    async def build_claim_comment_tree(self, uri: str) -> list:
+        """ Given a permanent URI, build a comment tree for the given claim
+
+        :param uri: The Desired Claim's Permanent URI
+        :return: List of comment objects arranged in a tree-like manner where
+          the replies to a specific comment can be accessed by the comments
+          'replies' field, which itself contains a list of comment objects.
+        """
+        comment_stack = await self.get_claim_comments(uri)
+        comment_tree = []
+        while len(comment_stack) > 0:
+            current_comment: dict = comment_stack.pop()
+            if current_comment['parent_index'] is None:  # -1 indicates a null pointer
+                comment_tree.append(current_comment)
+            current_comment['replies'] = await self.get_replies(current_comment)
+            comment_stack += current_comment['replies']
+        return comment_tree

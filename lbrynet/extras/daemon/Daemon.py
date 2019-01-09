@@ -1990,23 +1990,23 @@ class Daemon(metaclass=JSONRPCServerType):
                 return {'error': e.response['error']}
 
     @requires(CLAIM_METADATA_COMPONENT)
-    async def jsonrpc_get_comments(self, name: str = None, uri: str = None,
-                                   parents_only: bool = False) -> list:
+    async def jsonrpc_comment_list(self, parents_only: bool = None, name: str = None,
+                                   uri: str = None) -> list:
         """
         Gets the comments from the given Claim Name or the URI.
         If both the name and the uri are given, then we just use the URI for
         lookup.
 
         Usage:
-            get_comments [ <name> | --name=<name> ] [ <uri> | --uri=<uri> ] [--parents_only]
+            comment_list [--parents_only] [ <name> | --name=<name> ] [ <uri> | --uri=<uri> ]
 
         Options:
+            --parents_only  : (bool) Flag to indicate whether or not we want
+                             to see the top level comments or not. False by default
             --name=<name>   : (str) Name of the claim we're fetching
                              the comments from to be resolved
             --uri=<uri>     : (str) The permanent URI of the claim whose comments
                              to retrieve.
-            --parents_only  : (bool) Flag to indicate whether or not we want
-                             to see the top level comments or not. False by default
 
         Returns:
             (list)  Returns a list containing all the comments associated with a given
@@ -2027,7 +2027,7 @@ class Daemon(metaclass=JSONRPCServerType):
             return comment_tree
 
     @requires(CLAIM_METADATA_COMPONENT)
-    async def jsonrpc_make_comment(self, message, name: str = None, uri: str = None) -> dict:
+    async def jsonrpc_comment_create(self, message, name: str = None, uri: str = None) -> dict:
         """
         Makes a comment at the given Claim Name or URI. The username used to make the comment
         can be modified in the adjustable settings.
@@ -2035,7 +2035,7 @@ class Daemon(metaclass=JSONRPCServerType):
         The comment string must be between 2 and 2000 characters long
 
         Usage:
-            make_comment ( <message> | --message=<message> ) [ <name> | --name=<name> ]
+            comment_create ( <message> | --message=<message> ) [ <name> | --name=<name> ]
                          [ <uri> | --uri=<uri> ]
 
         Options:
@@ -2064,13 +2064,13 @@ class Daemon(metaclass=JSONRPCServerType):
                          "following message: %s", uri, error.message)
 
     @requires(CLAIM_METADATA_COMPONENT)
-    async def jsonrpc_reply_to_comment(self, comment_id: int, message: str) -> dict:
+    async def jsonrpc_comment_reply(self, comment_id: int, message: str) -> dict:
         """
         Reply to a comment with the given comment ID. The comment ID is acquired by
         using the get_comments command to get the comments for the given claim
 
         Usage:
-            reply_to_comment ( <comment_id> | --id=<comment_id> )
+            comment_reply ( <comment_id> | --id=<comment_id> )
                                      ( <message> | --message=<message> )
 
         Options:
@@ -2087,13 +2087,13 @@ class Daemon(metaclass=JSONRPCServerType):
             log.info("User tried to make a comment of length %i", len(message))
 
     @requires(CLAIM_METADATA_COMPONENT)
-    async def jsonrpc_get_comment_thread(self, comment_id: int) -> dict:
+    async def jsonrpc_comment_thread(self, comment_id: int) -> dict:
         """
         Gets the comment thread from a given Comment ID. This returns a dict
         of the parent comment and all of its children replies
 
         Usage:
-            get_comment_thread ( <comment_id> | --comment_id=<comment_id> )
+            comment_thread ( <comment_id> | --comment_id=<comment_id> )
 
         Options:
             --comment_id=<comment_id>  : (int) Parent comment of which to retrieve the

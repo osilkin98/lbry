@@ -161,6 +161,11 @@ class Env(envparse.Env):
         return value
 
 
+COMMENT_SERVER = {
+    'ip': '18.233.233.111',
+    'port': 2903
+}
+
 TYPE_DEFAULT = 'default'
 TYPE_PERSISTED = 'persisted'
 TYPE_ENV = 'env'
@@ -173,6 +178,7 @@ FIXED_SETTINGS = {
     'API_ADDRESS': 'lbryapi',
     'APP_NAME': APP_NAME,
     'BLOBFILES_DIR': 'blobfiles',
+    'METADATA_SERVER': f"http://{COMMENT_SERVER['ip']}:{COMMENT_SERVER['port']}/api",
     'CRYPTSD_FILE_EXTENSION': '.cryptsd',
     'CURRENCIES': {
         'BTC': {'type': 'crypto'},
@@ -259,7 +265,8 @@ ADJUSTABLE_SETTINGS = {
     'lbryum_servers': (list, [('lbryumx1.lbry.io', 50001), ('lbryumx2.lbry.io',
         50001)], server_list, server_list_reverse),
     's3_headers_depth': (int, 96 * 10),   # download headers from s3 when the local height is more than 10 chunks behind
-    'components_to_skip': (list, [])  # components which will be skipped during start-up of daemon
+    'components_to_skip': (list, []),  # components which will be skipped during start-up of daemon
+    'comments_username': (str, 'A Cool LBRYian')  # This should be something that the user configures
 }
 
 

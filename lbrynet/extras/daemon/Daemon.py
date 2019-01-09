@@ -398,7 +398,7 @@ class Daemon(metaclass=JSONRPCServerType):
         self.rate_limiter = None
         self.blob_manager = None
         self.upnp = None
-        self.metadata_manager: CommentsAPI = None
+        self.metadata_manager = None
 
         # TODO: delete this
         self.streams = {}
@@ -1964,109 +1964,6 @@ class Daemon(metaclass=JSONRPCServerType):
             return metadata
         except UnknownNameError:
             log.info('Name %s is not known', name)
-
-    @requires(CLAIM_METADATA_COMPONENT)
-    async def jsonrpc_comment_list(self, parents_only: bool = None, name: str = None,
-                                   uri: str = None) -> list:
-        """
-        Gets the comments from the given Claim Name or the URI.
-        If both the name and the uri are given, then we just use the URI for
-        lookup.
-
-        Usage:
-            comment_list [--parents_only] [ <name> | --name=<name> ] [ <uri> | --uri=<uri> ]
-
-        Options:
-            --parents_only  : (bool) Flag to indicate whether or not we want
-                             to see the top level comments or not. False by default
-            --name=<name>   : (str) Name of the claim we're fetching
-                             the comments from to be resolved
-            --uri=<uri>     : (str) The permanent URI of the claim whose comments
-                             to retrieve.
-
-        Returns:
-            (list)  Returns a list containing all the comments associated with a given
-                    claim name, if resolvable. If not then an error message is returned.
-        """
-        if uri is not None:
-            pass
-        elif name is not None:
-            lbry_data = await self.jsonrpc_resolve_name(name)
-            if lbry_data is not None and 'claim' in lbry_data:
-                uri = lbry_data['claim']['permanent_url']
-
-        if uri is not None:
-            comment_tree = await self.metadata_manager.get_claim_comments(uri)
-            if not parents_only and comment_tree is not None:
-                comment_tree = [await self.metadata_manager.build_comment_tree(comment['id'])
-                                for comment in comment_tree]
-            return comment_tree
-
-    @requires(CLAIM_METADATA_COMPONENT)
-    async def jsonrpc_comment_create(self, message, reply_to: int = None,
-                                     name: str = None, uri: str = None) -> dict:
-        """
-        Makes a comment at the given Claim Name or URI. The username used to make the comment
-        can be modified in the adjustable settings. If the the `reply_to` flag is provided,
-        then it is assumed that the message is a response to the ID provided by the reply_to flag.
-
-        The comment string must be between 2 and 2000 characters long
-
-        Usage:
-            comment_create ( <message> | --message=<message> ) [ --reply_to=<reply_to>]
-                [ <name> | --name=<name> ] [ <uri> | --uri=<uri> ]
-
-        Options:
-            --message=<message>  : (str) String to be posted as the comment
-            --reply_to=<reply_to>  : (int) The ID of a comment to make a response to
-            --name=<name>        : (str) Name of the claim to be resolved and have a comment made on
-            --uri=<uri>          : (str) Permanent URI of the claim on which to make the comment on
-
-        Returns:
-            (dict) Comment object if successfully made
-        """
-        if reply_to is not None:
-            reply_id = await self.metadata_manager.reply_to_comment(reply_id, message)
-            return await self.metadata_manager.get_comment(reply_id)
-        
-        else:
-            if uri is not None:
-                pass
-            elif name is not None:
-                claim_info = await self.jsonrpc_resolve_name(name)
-                if claim_info is not None and 'claim' in claim_info:
-                    uri = claim_info['claim']['permanent_url']
-                if claim_info is not None and 'error' not in claim_info:
-                    uri = claim_info['permanent_uri']
-    
-            if uri is not None:
-                try:
-                    comment_id = await self.metadata_manager.create_comment(uri, message)
-                    return await self.metadata_manager.get_comment(comment_id)
-                except ValueError:
-                    log.info("User tried to make a comment of length %i", len(message))
-                except InvalidClaimUriError as error:
-                    log.info("The server raised an error for the given uri %s with the "
-                             "following message: %s", uri, error.message)
-
-    @requires(CLAIM_METADATA_COMPONENT)
-    async def jsonrpc_comment_thread(self, comment_id: int) -> dict:
-        """
-        Gets the comment thread from a given Comment ID. This returns a dict
-        of the parent comment and all of its children replies
-
-        Usage:
-            comment_thread ( <comment_id> | --comment_id=<comment_id> )
-
-        Options:
-            --comment_id=<comment_id>  : (int) Parent comment of which to retrieve the
-                                         rest of the child comments.
-
-        Returns:
-            (dict) The parent comment and all of its replies in the 'replies' field.
-                   If there aren't any, null is returned.
-        """
-        return await self.metadata_manager.build_comment_tree(comment_id)
 
     @requires(WALLET_COMPONENT)
     async def jsonrpc_claim_show(self, txid=None, nout=None, claim_id=None):

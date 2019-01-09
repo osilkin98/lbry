@@ -46,8 +46,6 @@ from lbrynet.extras.daemon.ComponentManager import ComponentManager
 from lbrynet.extras.looping_call_manager import LoopingCallManager
 from lbrynet.p2p.Error import ComponentsNotStarted, ComponentStartConditionNotMet
 from lbrynet.extras.daemon.json_response_encoder import JSONResponseEncoder
-from lbrynet.extras.daemon.comments.MetadataAPI import CommentsAPI
-from lbrynet.extras.daemon.comments.exceptions import InvalidClaimUriError
 
 import asyncio
 import logging

@@ -21,7 +21,6 @@ from lbrynet.blob.EncryptedFileManager import EncryptedFileManager
 from lbrynet.blob.client.EncryptedFileDownloader import EncryptedFileSaverFactory
 from lbrynet.blob.client.EncryptedFileOptions import add_lbry_file_to_sd_identifier
 from lbrynet.dht.node import Node
-from lbrynet.extras.daemon.comments.MetadataAPI import CommentsAPI
 from lbrynet.extras.daemon.Component import Component
 from lbrynet.extras.daemon.ExchangeRateManager import ExchangeRateManager
 from lbrynet.extras.daemon.storage import SQLiteStorage
@@ -55,7 +54,6 @@ UPNP_COMPONENT = "upnp"
 EXCHANGE_RATE_MANAGER_COMPONENT = "exchange_rate_manager"
 RATE_LIMITER_COMPONENT = "rate_limiter"
 PAYMENT_RATE_COMPONENT = "payment_rate_manager"
-CLAIM_METADATA_COMPONENT = "metadata_manager"
 
 
 async def gather_dict(tasks: dict):
@@ -736,39 +734,3 @@ class ExchangeRateManagerComponent(Component):
 
     async def stop(self):
         self.exchange_rate_manager.stop()
-
-
-class MetadataClientComponent(Component):
-    component_name = CLAIM_METADATA_COMPONENT
-
-    def __init__(self, component_manager):
-        Component.__init__(self, component_manager)
-        self.metadata_api = CommentsAPI(
-            username=conf.settings['comments_username'],
-            url=conf.settings['METADATA_SERVER']
-        )
-
-    async def start(self) -> bool:
-        try:
-            await self.update_status()
-            log.debug("Successfully started MetadataClient")
-        except aiohttp.http.HttpProcessingError as e:
-            log.error("Metadata Server responded with HTTP code %i when requesting status, reason: %s",
-                      e.code, e.message)
-            log.debug("Metadata Server response headers: %s", e.headers)
-            log.warning("Failed to start MetadataClient")
-        return self.metadata_api.server.is_connected
-
-    async def stop(self) -> None:
-        pass  # Since the API makes singular requests once, there's no connection to close
-
-    @property
-    def component(self) -> CommentsAPI:
-        return self.metadata_api
-
-    @property
-    def status(self) -> dict:
-        return self.metadata_api.server.status
-
-    async def update_status(self) -> dict:
-        return await self.metadata_api.server.update_server_status()

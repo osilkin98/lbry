@@ -6,7 +6,7 @@ class MetadataServerException(Exception):
     def __str__(self) -> str:
         return str(self.response)
 
-    def __init__(self, result, *args, **kwargs: dict) -> None:
+    def __init__(self, result, *args) -> None:
         self.request_id = result['id']
         self.code = result['error']['code']
         self.message = result['error']['message'] if 'message' in result['error'] else None

@@ -1951,14 +1951,12 @@ class Daemon(metaclass=JSONRPCServerType):
         except UnknownNameError:
             log.info('Name %s is not known', name)
 
-    async def jsonrpc_comment_list(self, claim_id: str, parents_only: bool = False) -> list:
+    async def jsonrpc_comment_list(self, claim_id: str) -> list:
         """
         Usage:
-            comment_list [--parents_only] (<claim_id> | --claim_id=<claim_id>)
+            comment_list <claim_id>
 
         Options:
-            --parents_only  : (bool) Flag to indicate whether or not we want
-                             to see the top level comments or not. False by default
             --claim_id=<claim_id>  : (str) The Claim ID to get the comments of.
 
         Returns:
@@ -1969,37 +1967,7 @@ class Daemon(metaclass=JSONRPCServerType):
         if 'error' in claim_info:
             raise Exception(claim_info['error'])
         uri = 'lbry://' + claim_info['permanent_url']
-        from time import time
-        start = time()
-        comments = await jsonrpc_post(url, 'get_claim_comments', uri=uri, better_keys=True)
-        log.info('Got comments: %s', comments)
-        if comments is not None:
-            if not parents_only:
-                direct_reply_indices_batch = [{
-                    'jsonrpc': '2.0', 'id': i, 'method': 'get_comment_replies',
-                    'params': {'comm_index': comment['comment_index']}
-                } for i, comment in enumerate(comments)]
-                direct_reply_indices = await jsonrpc_batch(url, direct_reply_indices_batch)
-                direct_reply_batch = []
-                for reply in direct_reply_indices:
-                    if 'result' in reply:
-                        direct_reply_batch += [{
-                            'jsonrpc': '2.0',
-                            'id': f'{reply["id"]}:{idx}',  # Top Level Index : Index of comment in ID list
-                            'method': 'get_comment_data',
-                            'params':
-                                {'comm_index': reply_idx,
-                                 'better_keys': True}
-                        } for idx, reply_idx in enumerate(reply['result'])]
-                        comments[reply['id']]['replies'] = reply['result']
-                direct_replies = await jsonrpc_batch(url, direct_reply_batch)
-                for reply in direct_replies:
-                    if 'result' in reply:
-                        top_index, sub_index = reply['id'].split(':')
-                        comments[int(top_index)]['replies'][int(sub_index)] = reply['result']
-        stop = time()
-        log.info('Time taken to retrieve all top and sublevel comments: %f secs', stop - start)
-        return comments
+        return await jsonrpc_post(url, 'get_claim_comments', uri=uri, better_keys=True)
 
     async def jsonrpc_comment_create(self, claim_id: str, channel_name: str,
                                      message: str, reply_to: int = None,) -> dict:

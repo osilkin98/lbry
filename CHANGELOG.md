@@ -582,7 +582,7 @@ most commands.
 
 ## [0.15.0] - 2017-08-15
 ### Fixed
- * Fixed reflector server blocking the `received_blob` reply_to_comment on the server announcing the blob to the dht
+ * Fixed reflector server blocking the `received_blob` reply on the server announcing the blob to the dht
  * Fixed handling of SIGINT, SIGTERM.
  * Fixed shutdown sequence
  * Fix error when resolving an integer

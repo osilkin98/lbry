@@ -161,11 +161,6 @@ class Env(envparse.Env):
         return value
 
 
-COMMENT_SERVER = {
-    'ip': '18.233.233.111',
-    'port': 2903
-}
-
 TYPE_DEFAULT = 'default'
 TYPE_PERSISTED = 'persisted'
 TYPE_ENV = 'env'
@@ -178,7 +173,7 @@ FIXED_SETTINGS = {
     'API_ADDRESS': 'lbryapi',
     'APP_NAME': APP_NAME,
     'BLOBFILES_DIR': 'blobfiles',
-    'METADATA_SERVER': f"http://{COMMENT_SERVER['ip']}:{COMMENT_SERVER['port']}/api",
+    'COMMENT_SERVER': 'http://18.233.233.111:2903/api',
     'CRYPTSD_FILE_EXTENSION': '.cryptsd',
     'CURRENCIES': {
         'BTC': {'type': 'crypto'},

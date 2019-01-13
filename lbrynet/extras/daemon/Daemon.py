@@ -2002,7 +2002,7 @@ class Daemon(metaclass=JSONRPCServerType):
             if 'permanent_url' in claim_data:
                 uri = 'lbry://' + claim_data['permanent_url']
                 return await jsonrpc_post(url, 'comment', uri=uri, poster=channel_name, message=message)
- 
+
     async def jsonrpc_comment_get(self, comment_id: int) -> dict:
         """
         Gets the comment thread from a given Comment ID. This returns a dict
@@ -2019,7 +2019,7 @@ class Daemon(metaclass=JSONRPCServerType):
         Returns:
             (dict) The parent comment and all of its replies in the 'replies' field.
                    If there aren't any, an error is returned. The comment is described below:
-                   
+
                    {
                         'comment_index': (int) The index of the comment in the database
                         'claim_index': (int) The index of the claim this comment belongs to
@@ -2043,7 +2043,7 @@ class Daemon(metaclass=JSONRPCServerType):
                 'jsonrpc': '2.0',
                 'id': idx,
                 'method': 'get_comment_data',
-                'params': {'comm_index': idx,'better_keys': True}
+                'params': {'comm_index': idx, 'better_keys': True}
             } for idx in reply_ids],
             clean=True
         )

@@ -1983,7 +1983,7 @@ class Daemon(metaclass=JSONRPCServerType):
         return comments
 
     async def jsonrpc_comment_create(self, message: str, reply_to: int = None,
-                                     claim_id: int = None) -> dict:
+                                     claim_id: int = None, channel_name: str = None) -> dict:
         """
         Makes a comment at the given Claim Name or URI. The username used to make the comment
         can be modified in the adjustable settings. If the the `reply_to` flag is provided,
@@ -1993,30 +1993,31 @@ class Daemon(metaclass=JSONRPCServerType):
 
         Usage:
             comment_create ( <message> | --message=<message> ) [ --reply_to=<reply_to> ]
-                           [ <claim_id> | --claim_id=<claim_id> ]
+                           [ <claim_id> | --claim_id=<claim_id> ] [<channel_name | --channel_name=<channel_name>]
 
         Options:
             --message=<message>  : (str) String to be posted as the comment
             --reply_to=<reply_to>  : (int) The ID of a comment to make a response to
             --claim_id=<claim_id>  : (str) The unique ID of the claim. Is ignored if reply_to is provided
-        
+            --channel_name=<channel_name>  : (str) The Channel name that will be associated with the comment.
+                                                   Defaults to "A Cool LBRYian" if unspecified.
         Returns:
             (dict) Comment object if successfully made
         """
         if 1 < len(message) <= 2000:
             return {'error': f'Message length ({len(message)}) needs to be between 2 and 2000 chars'}
         url = conf.settings['METADATA_SERVER']
-        author = conf.settings['comments_username']
+        channel_name = 'A Cool LBRYian' if channel_name is None else channel_name
         if reply_to is not None:
             reply_id = await jsonrpc_post(url, 'reply', parent_id=reply_to,
-                                          poster=author, message=message)
+                                          poster=channel_name, message=message)
             if reply_id is not None:
                 return await get_comment(url, reply_id)
         else:
             claim_data = await self.jsonrpc_claim_show(claim_id=claim_id)
             if 'permanent_url' in claim_data:
                 uri = 'lbry://' + claim_data['permanent_url']
-                return await jsonrpc_post(url, 'comment', uri=uri, poster=author, message=message)
+                return await jsonrpc_post(url, 'comment', uri=uri, poster=channel_name, message=message)
  
     async def jsonrpc_comment_get(self, comment_id: int, get_replies: bool = True) -> dict:
         """

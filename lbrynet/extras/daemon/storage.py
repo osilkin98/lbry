@@ -340,7 +340,7 @@ class SQLiteStorage(SQLiteMixin):
             transaction.execute("delete from file where stream_hash=? ", (stream_hash, ))
             transaction.execute("delete from stream_blob where stream_hash=?", (stream_hash, ))
             transaction.execute("delete from stream where stream_hash=? ", (stream_hash, ))
-            transaction.execute("delete from blob where blob_hash=?", sd_hash)
+            transaction.execute("delete from blob where blob_hash=?", (sd_hash, ))
             for blob_hash in blob_hashes:
                 transaction.execute("delete from blob where blob_hash=?;", (blob_hash, ))
 

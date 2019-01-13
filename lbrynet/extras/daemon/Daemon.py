@@ -45,7 +45,7 @@ from lbrynet.extras.daemon.ComponentManager import ComponentManager
 from lbrynet.extras.looping_call_manager import LoopingCallManager
 from lbrynet.p2p.Error import ComponentsNotStarted, ComponentStartConditionNotMet
 from lbrynet.extras.daemon.json_response_encoder import JSONResponseEncoder
-from lbrynet.extras.daemon.comment_client import jsonrpc_post, jsonrpc_batch, get_comment, populate_comment_with_replies
+from lbrynet.extras.daemon.comment_client import jsonrpc_post, jsonrpc_batch
 
 import asyncio
 import logging
@@ -1172,7 +1172,6 @@ class Daemon(metaclass=JSONRPCServerType):
                          [--peer_search_timeout=<peer_search_timeout>]
                          [--sd_download_timeout=<sd_download_timeout>]
                          [--auto_renew_claim_height_delta=<auto_renew_claim_height_delta>]
-                         [--comments_username=<comments_username>]
 
         Options:
             --download_directory=<download_directory>  : (str) path of download directory
@@ -1199,9 +1198,6 @@ class Daemon(metaclass=JSONRPCServerType):
                 claims set to expire within this many blocks will be
                 automatically renewed after startup (if set to 0, renews
                 will not be made automatically)
-            --comments_username=<comments_username>  : (str) 'A Cool LBRYian'
-                Username displayed when making comments and replies on Content Claims.
-                Must be between 2 and 127 characters long.
 
         Returns:
             (dict) Updated dictionary of daemon settings
@@ -1225,7 +1221,6 @@ class Daemon(metaclass=JSONRPCServerType):
             'peer_search_timeout': int,
             'sd_download_timeout': int,
             'auto_renew_claim_height_delta': int,
-            'comments_username': str
         }
 
         for key, setting_type in setting_types.items():
@@ -1969,21 +1964,45 @@ class Daemon(metaclass=JSONRPCServerType):
         Returns:
             (list)  List of all the comments that were made to the claim_id. .
         """
-        url = conf.settings['METADATA_SERVER']
+        url = conf.settings['COMMENT_SERVER']
         claim_info = await self.jsonrpc_claim_show(claim_id=claim_id)
         if 'error' in claim_info:
             raise Exception(claim_info['error'])
         uri = 'lbry://' + claim_info['permanent_url']
+        from time import time
+        start = time()
         comments = await jsonrpc_post(url, 'get_claim_comments', uri=uri, better_keys=True)
         log.info('Got comments: %s', comments)
         if comments is not None:
             if not parents_only:
-                for comment in comments:
-                    await populate_comment_with_replies(url, comment)
+                direct_reply_indices_batch = [{
+                    'jsonrpc': '2.0', 'id': i, 'method': 'get_comment_replies',
+                    'params': {'comm_index': comment['comment_index']}
+                } for i, comment in enumerate(comments)]
+                direct_reply_indices = await jsonrpc_batch(url, direct_reply_indices_batch)
+                direct_reply_batch = []
+                for reply in direct_reply_indices:
+                    if 'result' in reply:
+                        direct_reply_batch += [{
+                            'jsonrpc': '2.0',
+                            'id': f'{reply["id"]}:{idx}',  # Top Level Index : Index of comment in ID list
+                            'method': 'get_comment_data',
+                            'params':
+                                {'comm_index': reply_idx,
+                                 'better_keys': True}
+                        } for idx, reply_idx in enumerate(reply['result'])]
+                        comments[reply['id']]['replies'] = reply['result']
+                direct_replies = await jsonrpc_batch(url, direct_reply_batch)
+                for reply in direct_replies:
+                    if 'result' in reply:
+                        top_index, sub_index = reply['id'].split(':')
+                        comments[int(top_index)]['replies'][int(sub_index)] = reply['result']
+        stop = time()
+        log.info('Time taken to retrieve all top and sublevel comments: %f secs', stop - start)
         return comments
 
-    async def jsonrpc_comment_create(self, message: str, reply_to: int = None,
-                                     claim_id: int = None, channel_name: str = None) -> dict:
+    async def jsonrpc_comment_create(self, claim_id: str, channel_name: str,
+                                     message: str, reply_to: int = None,) -> dict:
         """
         Makes a comment at the given Claim Name or URI. The username used to make the comment
         can be modified in the adjustable settings. If the the `reply_to` flag is provided,
@@ -1992,9 +2011,7 @@ class Daemon(metaclass=JSONRPCServerType):
         The comment string must be between 2 and 2000 characters long
 
         Usage:
-            comment_create ( <message> | --message=<message> ) [ --reply_to=<reply_to> ]
-                           [ <claim_id> | --claim_id=<claim_id> ] [<channel_name | --channel_name=<channel_name>]
-
+            comment_create <claim_id> <channel_name> <message> [--reply_to=<reply_to>]
         Options:
             --message=<message>  : (str) String to be posted as the comment
             --reply_to=<reply_to>  : (int) The ID of a comment to make a response to
@@ -2006,32 +2023,30 @@ class Daemon(metaclass=JSONRPCServerType):
         """
         if 1 < len(message) <= 2000:
             return {'error': f'Message length ({len(message)}) needs to be between 2 and 2000 chars'}
-        url = conf.settings['METADATA_SERVER']
-        channel_name = 'A Cool LBRYian' if channel_name is None else channel_name
+        url = conf.settings['COMMENT_SERVER']
         if reply_to is not None:
             reply_id = await jsonrpc_post(url, 'reply', parent_id=reply_to,
                                           poster=channel_name, message=message)
             if reply_id is not None:
-                return await get_comment(url, reply_id)
+                return await self.jsonrpc_comment_get(reply_id)
         else:
             claim_data = await self.jsonrpc_claim_show(claim_id=claim_id)
             if 'permanent_url' in claim_data:
                 uri = 'lbry://' + claim_data['permanent_url']
                 return await jsonrpc_post(url, 'comment', uri=uri, poster=channel_name, message=message)
  
-    async def jsonrpc_comment_get(self, comment_id: int, get_replies: bool = True) -> dict:
+    async def jsonrpc_comment_get(self, comment_id: int) -> dict:
         """
         Gets the comment thread from a given Comment ID. This returns a dict
         of the parent comment and all of its children replies
 
         Usage:
-            comment_thread ( <comment_id> | --comment_id=<comment_id> ) [--get_replies]
+            comment_thread (<comment_id> | --comment_id=<comment_id>)
 
         Options:
             --comment_id=<comment_id>  : (int) Parent comment of which to retrieve the
                                          rest of the child comments.
-            --get_replies              : (bool) Whether or not we want to recursively
-                                         get all the subsequent replies to this comment
+
 
         Returns:
             (dict) The parent comment and all of its replies in the 'replies' field.
@@ -2051,10 +2066,19 @@ class Daemon(metaclass=JSONRPCServerType):
                                            subsequent children have replies.
                    }
         """
-        url = conf.settings['METADATA_SERVER']
-        root = await get_comment(url, comment_id)
-        if get_replies:
-            await populate_comment_with_replies(url, root)
+        url = conf.settings['COMMENT_SERVER']
+        root = await jsonrpc_post(url, 'get_comment_data', comm_index=comment_id, better_keys=True)
+        reply_ids = await jsonrpc_post(url, 'get_comment_replies', comm_index=comment_id)
+        root['replies'] = await jsonrpc_batch(
+            url,
+            calls=[{
+                'jsonrpc': '2.0',
+                'id': idx,
+                'method': 'get_comment_data',
+                'params': {'comm_index': idx,'better_keys': True}
+            } for idx in reply_ids],
+            clean=True
+        )
         return root
 
     @requires(WALLET_COMPONENT)

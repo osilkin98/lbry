@@ -45,7 +45,7 @@ from lbrynet.extras.daemon.ComponentManager import ComponentManager
 from lbrynet.extras.looping_call_manager import LoopingCallManager
 from lbrynet.p2p.Error import ComponentsNotStarted, ComponentStartConditionNotMet
 from lbrynet.extras.daemon.json_response_encoder import JSONResponseEncoder
-from lbrynet.extras.daemon.CommentClient import jsonrpc_post, get_comment
+from lbrynet.extras.daemon.comment_client import jsonrpc_post, jsonrpc_batch, get_comment, populate_comment_with_replies
 
 import asyncio
 import logging
@@ -1956,49 +1956,34 @@ class Daemon(metaclass=JSONRPCServerType):
         except UnknownNameError:
             log.info('Name %s is not known', name)
 
-    async def jsonrpc_comment_list(self, parents_only: bool = None, name: str = None,
-                                   uri: str = None) -> list:
+    async def jsonrpc_comment_list(self, claim_id: str, parents_only: bool = False) -> list:
         """
-        Gets the comments from the given Claim Name or the URI.
-        If both the name and the uri are given, then we just use the URI for
-        lookup.
-
         Usage:
-            comment_list [--parents_only] [ <name> | --name=<name> ] [ <uri> | --uri=<uri> ]
+            comment_list [--parents_only] (<claim_id> | --claim_id=<claim_id>)
 
         Options:
             --parents_only  : (bool) Flag to indicate whether or not we want
                              to see the top level comments or not. False by default
-            --name=<name>   : (str) Name of the claim we're fetching
-                             the comments from to be resolved
-            --uri=<uri>     : (str) The permanent URI of the claim whose comments
-                             to retrieve.
+            --claim_id=<claim_id>  : (str) The Claim ID to get the comments of.
 
         Returns:
-            (list)  Returns a list containing all the comments associated with a given
-                    claim name, if resolvable. If not then an error message is returned.
+            (list)  List of all the comments that were made to the claim_id. .
         """
-        if uri is not None:
-            pass
-        elif name is not None:
-            lbry_data = await self.jsonrpc_resolve_name(name)
-            if lbry_data is not None and 'claim' in lbry_data:
-                uri = 'lbry://' + lbry_data['claim']['permanent_url']
-        if uri is not None:
-            url = conf.settings['METADATA_SERVER']
-            response = await jsonrpc_post(
-                url, 'get_claim_comments', {'uri': uri, 'better_keys': True})
-            log.info('Got response: %s', response)
-            if 'error' not in response:
-                comments = response['result']
-                if not parents_only:
-                    comments = [await self.jsonrpc_comment_get(comment['comment_index'])
-                                for comment in comments]
-                return comments
-            return response['error']
+        url = conf.settings['METADATA_SERVER']
+        claim_info = await self.jsonrpc_claim_show(claim_id=claim_id)
+        if 'error' in claim_info:
+            raise Exception(claim_info['error'])
+        uri = 'lbry://' + claim_info['permanent_url']
+        comments = await jsonrpc_post(url, 'get_claim_comments', uri=uri, better_keys=True)
+        log.info('Got comments: %s', comments)
+        if comments is not None:
+            if not parents_only:
+                for comment in comments:
+                    await populate_comment_with_replies(url, comment)
+        return comments
 
-    async def jsonrpc_comment_create(self, message, reply_to: int = None,
-                                     name: str = None, uri: str = None) -> dict:
+    async def jsonrpc_comment_create(self, message: str, reply_to: int = None,
+                                     claim_id: int = None) -> dict:
         """
         Makes a comment at the given Claim Name or URI. The username used to make the comment
         can be modified in the adjustable settings. If the the `reply_to` flag is provided,
@@ -2007,15 +1992,14 @@ class Daemon(metaclass=JSONRPCServerType):
         The comment string must be between 2 and 2000 characters long
 
         Usage:
-            comment_create ( <message> | --message=<message> ) [ --reply_to=<reply_to>]
-                [ <name> | --name=<name> ] [ <uri> | --uri=<uri> ]
+            comment_create ( <message> | --message=<message> ) [ --reply_to=<reply_to> ]
+                           [ <claim_id> | --claim_id=<claim_id> ]
 
         Options:
             --message=<message>  : (str) String to be posted as the comment
             --reply_to=<reply_to>  : (int) The ID of a comment to make a response to
-            --name=<name>        : (str) Name of the claim to be resolved and have a comment made on
-            --uri=<uri>          : (str) Permanent URI of the claim on which to make the comment on
-
+            --claim_id=<claim_id>  : (str) The unique ID of the claim. Is ignored if reply_to is provided
+        
         Returns:
             (dict) Comment object if successfully made
         """
@@ -2024,25 +2008,16 @@ class Daemon(metaclass=JSONRPCServerType):
         url = conf.settings['METADATA_SERVER']
         author = conf.settings['comments_username']
         if reply_to is not None:
-            reply = await jsonrpc_post(url, 'reply', {'poster': author, 'message': message})
-            if 'error' not in reply:
-                return await self.jsonrpc_comment_get(reply['result'], False)
+            reply_id = await jsonrpc_post(url, 'reply', parent_id=reply_to,
+                                          poster=author, message=message)
+            if reply_id is not None:
+                return await get_comment(url, reply_id)
         else:
-            if uri is not None:
-                pass
-            elif name is not None:
-                claim_info = await self.jsonrpc_resolve_name(name)
-                if claim_info is not None and 'claim' in claim_info:
-                    uri = 'lbry://' + claim_info['claim']['permanent_url']
-    
-            if uri is not None:
-                response = await jsonrpc_post(
-                    url, 'comment', {'uri': uri, 'poster': author, 'message': message})
-                if 'error' not in response:
-                    return await get_comment(url, response['result'])
-                else:
-                    return response['error']
-
+            claim_data = await self.jsonrpc_claim_show(claim_id=claim_id)
+            if 'permanent_url' in claim_data:
+                uri = 'lbry://' + claim_data['permanent_url']
+                return await jsonrpc_post(url, 'comment', uri=uri, poster=author, message=message)
+ 
     async def jsonrpc_comment_get(self, comment_id: int, get_replies: bool = True) -> dict:
         """
         Gets the comment thread from a given Comment ID. This returns a dict
@@ -2070,22 +2045,15 @@ class Daemon(metaclass=JSONRPCServerType):
                         'message': (str) as the name suggests
                         'upvotes': (int) as the name suggests
                         'downvotes': (int) as the name suggests
+                        'replies' : (dict) If the get_replies flag was used and this field
+                                           will be present ONLY IF the comment and any
+                                           subsequent children have replies.
                    }
         """
         url = conf.settings['METADATA_SERVER']
         root = await get_comment(url, comment_id)
         if get_replies:
-            reply_stack = [root]
-            while len(reply_stack) > 0:
-                log.info('reply_stack: %s', reply_stack)
-                comment = reply_stack.pop()
-                replies = await jsonrpc_post(
-                    url, 'get_comment_replies',
-                    {'comm_index': comment['comment_index'], 'better_keys': True})
-                log.info('replies: %s', replies)
-                if 'result' in replies:
-                    comment['replies'] = [await get_comment(url, idx) for idx in replies]
-                    reply_stack += comment['replies']
+            await populate_comment_with_replies(url, root)
         return root
 
     @requires(WALLET_COMPONENT)

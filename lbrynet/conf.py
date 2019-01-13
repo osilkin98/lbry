@@ -261,7 +261,6 @@ ADJUSTABLE_SETTINGS = {
         50001)], server_list, server_list_reverse),
     's3_headers_depth': (int, 96 * 10),   # download headers from s3 when the local height is more than 10 chunks behind
     'components_to_skip': (list, []),  # components which will be skipped during start-up of daemon
-    'comments_username': (str, 'A Cool LBRYian')  # This should be something that the user configures
 }
 
 

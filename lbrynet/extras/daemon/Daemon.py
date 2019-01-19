@@ -1951,14 +1951,20 @@ class Daemon(metaclass=JSONRPCServerType):
         except UnknownNameError:
             log.info('Name %s is not known', name)
 
-    async def jsonrpc_comment_list(self, claim_id: str) -> list:
+    async def jsonrpc_comment_list(self, claim_id: str, comment_id: int = None,
+                                   page: int = None, page_size: int = None) -> list:
         """
         Usage:
-            comment_list <claim_id>
+            comment_list <claim_id> [--comment_id=<comment_id> | <comment_id>]
+                         [(--page=<page> --page_size=<page_size>)]
 
         Options:
-            --claim_id=<claim_id>  : (str) The Claim ID to get the comments of.
-
+            --comment_id=<comment_id>  : (int) The ID of the comment whose replies you'd
+                                         like to list.
+            --page=<page>  : (int) The page you'd like to see in the comment list.
+                             The first page is 1, second page is 2, and so on.
+            --page_size=<page_size>  : (int) The amount of comments that you'd like to
+                                       retrieve in one request
         Returns:
             (list)  List of all the comments that were made to the claim_id. .
         """
@@ -1967,10 +1973,23 @@ class Daemon(metaclass=JSONRPCServerType):
         if 'error' in claim_info:
             raise Exception(claim_info['error'])
         uri = 'lbry://' + claim_info['permanent_url']
-        return await jsonrpc_post(url, 'get_claim_comments', uri=uri, better_keys=True)
+        if comment_id is None:
+            comments = await jsonrpc_post(url, 'get_claim_comments', uri=uri, better_keys=True)
+            if page is not None:
+                return comments[page_size*(page-1):page_size*page]
+            return comments
+        reply_indices = await jsonrpc_post(url, 'get_comment_replies', comm_index=comment_id)
+        if reply_indices:
+            replies_batch = [
+                {'jsonrpc': '2.0', 'id': idx, 'method': 'get_comment_data',
+                 'params': {'comm_index': idx, 'better_keys': True}}
+                for idx in (reply_indices if page is None else
+                            reply_indices[page_size*(page-1):page_size*page])
+            ]
+            return await jsonrpc_batch(url, replies_batch, clean=True)
 
     async def jsonrpc_comment_create(self, claim_id: str, channel_name: str,
-                                     message: str, reply_to: int = None,) -> dict:
+                                     message: str, reply_to: int = None) -> dict:
         """
         Makes a comment at the given Claim Name or URI. The username used to make the comment
         can be modified in the adjustable settings. If the the `reply_to` flag is provided,
@@ -1980,74 +1999,28 @@ class Daemon(metaclass=JSONRPCServerType):
 
         Usage:
             comment_create <claim_id> <channel_name> <message> [--reply_to=<reply_to>]
+
         Options:
-            --message=<message>  : (str) String to be posted as the comment
             --reply_to=<reply_to>  : (int) The ID of a comment to make a response to
-            --claim_id=<claim_id>  : (str) The unique ID of the claim. Is ignored if reply_to is provided
-            --channel_name=<channel_name>  : (str) The Channel name that will be associated with the comment.
-                                                   Defaults to "A Cool LBRYian" if unspecified.
+
         Returns:
             (dict) Comment object if successfully made
         """
-        if 1 < len(message) <= 2000:
+        if not 1 < len(message) <= 2000:
             return {'error': f'Message length ({len(message)}) needs to be between 2 and 2000 chars'}
         url = conf.settings['COMMENT_SERVER']
         if reply_to is not None:
-            reply_id = await jsonrpc_post(url, 'reply', parent_id=reply_to,
-                                          poster=channel_name, message=message)
-            if reply_id is not None:
-                return await self.jsonrpc_comment_get(reply_id)
+            comment_id = await jsonrpc_post(url, 'reply', parent_id=reply_to,
+                                            poster=channel_name, message=message)
         else:
             claim_data = await self.jsonrpc_claim_show(claim_id=claim_id)
             if 'permanent_url' in claim_data:
                 uri = 'lbry://' + claim_data['permanent_url']
-                return await jsonrpc_post(url, 'comment', uri=uri, poster=channel_name, message=message)
-
-    async def jsonrpc_comment_get(self, comment_id: int) -> dict:
-        """
-        Gets the comment thread from a given Comment ID. This returns a dict
-        of the parent comment and all of its children replies
-
-        Usage:
-            comment_thread (<comment_id> | --comment_id=<comment_id>)
-
-        Options:
-            --comment_id=<comment_id>  : (int) Parent comment of which to retrieve the
-                                         rest of the child comments.
-
-
-        Returns:
-            (dict) The parent comment and all of its replies in the 'replies' field.
-                   If there aren't any, an error is returned. The comment is described below:
-
-                   {
-                        'comment_index': (int) The index of the comment in the database
-                        'claim_index': (int) The index of the claim this comment belongs to
-                        'author': (str) as the name suggests
-                        'parent_index': (int) Index of the comment this is in response to
-                        'time_posted': (int) Stored as seconds since last UTC Epoch
-                        'message': (str) as the name suggests
-                        'upvotes': (int) as the name suggests
-                        'downvotes': (int) as the name suggests
-                        'replies' : (dict) If the get_replies flag was used and this field
-                                           will be present ONLY IF the comment and any
-                                           subsequent children have replies.
-                   }
-        """
-        url = conf.settings['COMMENT_SERVER']
-        root = await jsonrpc_post(url, 'get_comment_data', comm_index=comment_id, better_keys=True)
-        reply_ids = await jsonrpc_post(url, 'get_comment_replies', comm_index=comment_id)
-        root['replies'] = await jsonrpc_batch(
-            url,
-            calls=[{
-                'jsonrpc': '2.0',
-                'id': idx,
-                'method': 'get_comment_data',
-                'params': {'comm_index': idx, 'better_keys': True}
-            } for idx in reply_ids],
-            clean=True
-        )
-        return root
+                comment_id = await jsonrpc_post(url, 'comment', uri=uri,
+                                                poster=channel_name, message=message)
+            else:
+                raise Exception("claim_id was either invalid or gave an invalid permanent uri")
+        return await jsonrpc_post(url, 'get_comment_data', comm_index=comment_id, better_keys=True)
 
     @requires(WALLET_COMPONENT)
     async def jsonrpc_claim_show(self, txid=None, nout=None, claim_id=None):

@@ -11,6 +11,7 @@ def rpc_body(method: str, rpc_id: any, **params) -> dict:
 async def jsonrpc_post(url: str, method: str, **params) -> any:
     clean = params.pop('clean', True)
     response = (await jsonrpc_batch(url, [rpc_body(method, 1, **params)]))[0]
+    log.info("Got response from comment server: %s", response)
     if clean:
         if 'error' in response:
             return response['error']

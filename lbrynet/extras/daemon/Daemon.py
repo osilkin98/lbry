@@ -3109,11 +3109,12 @@ class Daemon(metaclass=JSONRPCServerType):
         List comments associated with a claim.
 
         Usage:
-            comment_list <claim_id> [--flat] [(--page=<page> --page_size=<page_size>)]
+            comment_list (<claim_id> | --claim_id=<claim_id>) [--flat] [(--page=<page> --page_size=<page_size>)]
                          [--parent_comment_id=<parent_comment_id>]
                          [--max_replies_shown=<max_replies_shown>]
 
         Options:
+            --claim_id=<claim_id>  : (str) Claim's ID to get comments from.
             --flat  : (bool) Flag to indicate whether or not you want the
                                     replies to be flattened along with the rest of
                                     the comments attached to the claim. Off by default

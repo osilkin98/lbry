@@ -247,7 +247,9 @@ class SQLiteStorage(SQLiteMixin):
                 blob_data_rate real not null,
                 status text not null,
                 saved_file integer not null,
-                content_fee text
+                content_fee text,
+                added_at integer not null default (strftime('%s', 'now')),
+                claim_updated_at integer
             );
 
             create table if not exists content_claim (

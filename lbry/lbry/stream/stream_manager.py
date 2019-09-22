@@ -31,6 +31,7 @@ filter_fields = [
     'rowid',
     'status',
     'file_name',
+    'added_at',
     'sd_hash',
     'stream_hash',
     'claim_name',

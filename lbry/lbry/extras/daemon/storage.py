@@ -120,6 +120,7 @@ def get_all_lbry_files(transaction: sqlite3.Connection) -> typing.List[typing.Di
         files.append(
             {
                 "rowid": rowid,
+                "added_at": added_at,
                 "stream_hash": stream_hash,
                 "file_name": file_name,                      # hex
                 "download_directory": download_dir,          # hex

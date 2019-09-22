@@ -52,6 +52,7 @@ class ManagedStream:
         'sd_hash',
         'download_directory',
         '_file_name',
+        '_added_at',
         '_status',
         'stream_claim_info',
         'download_id',
@@ -77,7 +78,8 @@ class ManagedStream:
                  download_id: typing.Optional[str] = None, rowid: typing.Optional[int] = None,
                  descriptor: typing.Optional[StreamDescriptor] = None,
                  content_fee: typing.Optional['Transaction'] = None,
-                 analytics_manager: typing.Optional['AnalyticsManager'] = None):
+                 analytics_manager: typing.Optional['AnalyticsManager'] = None,
+                 added_at: typing.Optional[int] = None):
         self.loop = loop
         self.config = config
         self.blob_manager = blob_manager
@@ -89,6 +91,7 @@ class ManagedStream:
         self.download_id = download_id or binascii.hexlify(generate_id()).decode()
         self.rowid = rowid
         self.content_fee = content_fee
+        self._added_at = added_at
         self.downloader = StreamDownloader(self.loop, self.config, self.blob_manager, sd_hash, descriptor)
         self.analytics_manager = analytics_manager
 
@@ -114,6 +117,10 @@ class ManagedStream:
     @property
     def file_name(self) -> typing.Optional[str]:
         return self._file_name or (self.descriptor.suggested_file_name if self.descriptor else None)
+
+    @property
+    def added_at(self) -> typing.Optional[int]:
+        return self._added_at
 
     @property
     def status(self) -> str:

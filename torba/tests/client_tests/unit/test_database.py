@@ -1,5 +1,10 @@
+import sys
+import os
 import unittest
 import sqlite3
+import tempfile
+import asyncio
+from concurrent.futures.thread import ThreadPoolExecutor
 
 from torba.client.wallet import Wallet
 from torba.client.constants import COIN
@@ -268,7 +273,6 @@ class TestQueries(AsyncioTestCase):
                 self.assertEqual(len(tx.outputs), 1)
                 last_tx = tx
 
-
     async def test_queries(self):
         self.assertEqual(0, await self.ledger.db.get_address_count())
         account1 = await self.create_account()
@@ -354,3 +358,174 @@ class TestQueries(AsyncioTestCase):
         txs = await self.ledger.db.get_transactions(accounts=[account1, account2])
         self.assertEqual([0, 3, 2, 1], [tx.height for tx in txs])
         self.assertEqual([tx4.id, tx3.id, tx2.id, tx1.id], [tx.id for tx in txs])
+
+
+class TestUpgrade(AsyncioTestCase):
+
+    def setUp(self) -> None:
+        self.path = tempfile.mktemp()
+
+    def tearDown(self) -> None:
+        os.remove(self.path)
+
+    def get_version(self):
+        with sqlite3.connect(self.path) as conn:
+            versions = conn.execute('select version from version').fetchall()
+            assert len(versions) == 1
+            return versions[0][0]
+
+    def get_tables(self):
+        with sqlite3.connect(self.path) as conn:
+            sql = "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name;"
+            return [col[0] for col in conn.execute(sql).fetchall()]
+
+    def add_address(self, address):
+        with sqlite3.connect(self.path) as conn:
+            conn.execute("""
+            INSERT INTO pubkey_address (address, account, chain, position, pubkey)
+            VALUES (?, 'account1', 0, 0, 'pubkey blob')
+            """, (address,))
+
+    def get_addresses(self):
+        with sqlite3.connect(self.path) as conn:
+            sql = "SELECT address FROM pubkey_address ORDER BY address;"
+            return [col[0] for col in conn.execute(sql).fetchall()]
+
+    async def test_reset_on_version_change(self):
+        self.ledger = ledger_class({
+            'db': ledger_class.database_class(self.path),
+            'headers': ledger_class.headers_class(':memory:'),
+        })
+
+        # initial open, pre-version enabled db
+        self.ledger.db.SCHEMA_VERSION = None
+        self.assertEqual(self.get_tables(), [])
+        await self.ledger.db.open()
+        self.assertEqual(self.get_tables(), ['pubkey_address', 'tx', 'txi', 'txo'])
+        self.assertEqual(self.get_addresses(), [])
+        self.add_address('address1')
+        await self.ledger.db.close()
+
+        # initial open after version enabled
+        self.ledger.db.SCHEMA_VERSION = '1.0'
+        await self.ledger.db.open()
+        self.assertEqual(self.get_version(), '1.0')
+        self.assertEqual(self.get_tables(), ['pubkey_address', 'tx', 'txi', 'txo', 'version'])
+        self.assertEqual(self.get_addresses(), [])  # address1 deleted during version upgrade
+        self.add_address('address2')
+        await self.ledger.db.close()
+
+        # nothing changes
+        self.assertEqual(self.get_version(), '1.0')
+        self.assertEqual(self.get_tables(), ['pubkey_address', 'tx', 'txi', 'txo', 'version'])
+        await self.ledger.db.open()
+        self.assertEqual(self.get_version(), '1.0')
+        self.assertEqual(self.get_tables(), ['pubkey_address', 'tx', 'txi', 'txo', 'version'])
+        self.assertEqual(self.get_addresses(), ['address2'])
+        await self.ledger.db.close()
+
+        # upgrade version, database reset
+        self.ledger.db.SCHEMA_VERSION = '1.1'
+        self.ledger.db.CREATE_TABLES_QUERY += """
+        create table if not exists foo (bar text);
+        """
+        await self.ledger.db.open()
+        self.assertEqual(self.get_version(), '1.1')
+        self.assertEqual(self.get_tables(), ['foo', 'pubkey_address', 'tx', 'txi', 'txo', 'version'])
+        self.assertEqual(self.get_addresses(), [])  # all tables got reset
+        await self.ledger.db.close()
+
+
+class TestSQLiteRace(AsyncioTestCase):
+    max_misuse_attempts = 40000
+
+    def setup_db(self):
+        self.db = sqlite3.connect(":memory:", isolation_level=None)
+        self.db.executescript(
+            "create table test1 (id text primary key not null, val text);\n" +
+            "create table test2 (id text primary key not null, val text);\n" +
+            "\n".join(f"insert into test1 values ({v}, NULL);" for v in range(1000))
+        )
+
+    async def asyncSetUp(self):
+        self.executor = ThreadPoolExecutor(1)
+        await self.loop.run_in_executor(self.executor, self.setup_db)
+
+    async def asyncTearDown(self):
+        await self.loop.run_in_executor(self.executor, self.db.close)
+        self.executor.shutdown()
+
+    async def test_binding_param_0_error(self):
+        # test real param 0 binding errors
+
+        for supported_type in [str, int, bytes]:
+            await self.loop.run_in_executor(
+                self.executor, self.db.executemany, "insert into test2 values (?, NULL)",
+                [(supported_type(1), ), (supported_type(2), )]
+            )
+            await self.loop.run_in_executor(
+                self.executor, self.db.execute, "delete from test2 where id in (1, 2)"
+            )
+        for unsupported_type in [lambda x: (x, ), lambda x: [x], lambda x: {x}]:
+            try:
+                await self.loop.run_in_executor(
+                    self.executor, self.db.executemany, "insert into test2 (id, val) values (?, NULL)",
+                    [(unsupported_type(1), ), (unsupported_type(2), )]
+                )
+                self.assertTrue(False)
+            except sqlite3.InterfaceError as err:
+                self.assertEqual(str(err), "Error binding parameter 0 - probably unsupported type.")
+
+    async def test_unhandled_sqlite_misuse(self):
+        # test SQLITE_MISUSE being incorrectly raised as a param 0 binding error
+        attempts = 0
+        python_version = sys.version.split('\n')[0].rstrip(' ')
+
+        try:
+            while attempts < self.max_misuse_attempts:
+                f1 = asyncio.wrap_future(
+                    self.loop.run_in_executor(
+                        self.executor, self.db.executemany, "update test1 set val='derp' where id=?",
+                        ((str(i),) for i in range(2))
+                    )
+                )
+                f2 = asyncio.wrap_future(
+                    self.loop.run_in_executor(
+                        self.executor, self.db.executemany, "update test2 set val='derp' where id=?",
+                        ((str(i),) for i in range(2))
+                    )
+                )
+                attempts += 1
+                await asyncio.gather(f1, f2)
+            print(f"\nsqlite3 {sqlite3.version}/python {python_version} "
+                  f"did not raise SQLITE_MISUSE within {attempts} attempts of the race condition")
+            self.assertTrue(False, 'this test failing means either the sqlite race conditions '
+                                   'have been fixed in cpython or the test max_attempts needs to be increased')
+        except sqlite3.InterfaceError as err:
+            self.assertEqual(str(err), "Error binding parameter 0 - probably unsupported type.")
+        print(f"\nsqlite3 {sqlite3.version}/python {python_version} raised SQLITE_MISUSE "
+              f"after {attempts} attempts of the race condition")
+
+    @unittest.SkipTest
+    async def test_fetchall_prevents_sqlite_misuse(self):
+        # test that calling fetchall sufficiently avoids the race
+        attempts = 0
+
+        def executemany_fetchall(query, params):
+            self.db.executemany(query, params).fetchall()
+
+        while attempts < self.max_misuse_attempts:
+            f1 = asyncio.wrap_future(
+                self.loop.run_in_executor(
+                    self.executor, executemany_fetchall, "update test1 set val='derp' where id=?",
+                    ((str(i),) for i in range(2))
+                )
+            )
+            f2 = asyncio.wrap_future(
+                self.loop.run_in_executor(
+                    self.executor, executemany_fetchall, "update test2 set val='derp' where id=?",
+                    ((str(i),) for i in range(2))
+                )
+            )
+            attempts += 1
+            await asyncio.gather(f1, f2)

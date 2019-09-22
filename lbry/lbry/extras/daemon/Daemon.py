@@ -1520,26 +1520,33 @@ class Daemon(metaclass=JSONRPCServerType):
         return False
 
     @requires(WALLET_COMPONENT)
-    def jsonrpc_address_list(self, account_id=None, page=None, page_size=None):
+    def jsonrpc_address_list(self, address=None, account_id=None, page=None, page_size=None):
         """
-        List account addresses
+        List account addresses or details of single address.
 
         Usage:
-            address_list [<account_id> | --account_id=<account_id>]
+            address_list [--address=<address>] [--account_id=<account_id>]
                          [--page=<page>] [--page_size=<page_size>]
 
         Options:
+            --address=<address>        : (str) just show details for single address
             --account_id=<account_id>  : (str) id of the account to use
             --page=<page>              : (int) page to return during paginating
             --page_size=<page_size>    : (int) number of items on page during pagination
 
         Returns: {Paginated[Address]}
         """
-        account = self.get_account_or_default(account_id)
+        constraints = {
+            'cols': ('address', 'account', 'used_times')
+        }
+        if address:
+            constraints['address'] = address
+        if account_id:
+            constraints['accounts'] = [self.get_account_or_error(account_id)]
         return maybe_paginate(
-            account.get_addresses,
-            account.get_address_count,
-            page, page_size
+            self.ledger.get_addresses,
+            self.ledger.get_address_count,
+            page, page_size, **constraints
         )
 
     @requires(WALLET_COMPONENT)
@@ -1794,7 +1801,8 @@ class Daemon(metaclass=JSONRPCServerType):
 
         Usage:
             claim_search [<name> | --name=<name>] [--claim_id=<claim_id>] [--txid=<txid>] [--nout=<nout>]
-                         [--channel=<channel> | --channel_ids=<channel_ids>... --not_channel_ids=<not_channel_ids>...]
+                         [--channel=<channel> |
+                             [[--channel_ids=<channel_ids>...] [--not_channel_ids=<not_channel_ids>...]]]
                          [--has_channel_signature] [--valid_channel_signature | --invalid_channel_signature]
                          [--is_controlling] [--release_time=<release_time>] [--public_key_id=<public_key_id>]
                          [--timestamp=<timestamp>] [--creation_timestamp=<creation_timestamp>]
@@ -2310,15 +2318,39 @@ class Daemon(metaclass=JSONRPCServerType):
         channel_private_key = ecdsa.SigningKey.from_pem(
             data['signing_private_key'], hashfunc=hashlib.sha256
         )
-        account: LBCAccount = await self.ledger.get_account_for_address(data['holding_address'])
-        if not account:
-            account = LBCAccount.from_dict(self.ledger, self.default_wallet, {
-                'name': f"Holding Account For Channel {data['name']}",
-                'public_key': data['holding_public_key'],
-                'address_generator': {'name': 'single-address'}
-            })
-            if self.ledger.network.is_connected:
-                await self.ledger.subscribe_account(account)
+        public_key_der = channel_private_key.get_verifying_key().to_der()
+
+        # check that the holding_address hasn't changed since the export was made
+        holding_address = data['holding_address']
+        channels, _, _ = await self.ledger.claim_search(
+            public_key_id=self.ledger.public_key_to_address(public_key_der)
+        )
+        if channels and channels[0].get_address(self.ledger) != holding_address:
+            holding_address = channels[0].get_address(self.ledger)
+
+        account: LBCAccount = await self.ledger.get_account_for_address(holding_address)
+        if account:
+            # Case 1: channel holding address is in one of the accounts we already have
+            #         simply add the certificate to existing account
+            pass
+        else:
+            # Case 2: channel holding address hasn't changed and thus is in the bundled read-only account
+            #         create a single-address holding account to manage the channel
+            if holding_address == data['holding_address']:
+                account = LBCAccount.from_dict(self.ledger, self.default_wallet, {
+                    'name': f"Holding Account For Channel {data['name']}",
+                    'public_key': data['holding_public_key'],
+                    'address_generator': {'name': 'single-address'}
+                })
+                if self.ledger.network.is_connected:
+                    await self.ledger.subscribe_account(account)
+                    await self.ledger._update_tasks.done.wait()
+            # Case 3: the holding address has changed and we can't create or find an account for it
+            else:
+                raise Exception(
+                    "Channel owning account has changed since the channel was exported and "
+                    "it is not an account to which you have access."
+                )
         account.add_channel_private_key(channel_private_key)
         self.default_wallet.save()
         return f"Added channel signing key for {data['name']}."
@@ -3610,7 +3642,7 @@ class Daemon(metaclass=JSONRPCServerType):
             }
         """
         comment_body = {
-            'comment': comment,
+            'comment': comment.strip(),
             'claim_id': claim_id,
             'parent_id': parent_id,
         }
@@ -3770,17 +3802,19 @@ class Daemon(metaclass=JSONRPCServerType):
             key, value = 'name', channel_name
         else:
             raise ValueError("Couldn't find channel because a channel_id or channel_name was not provided.")
-        for account in self.get_accounts_or_all(account_ids):
-            channels = await account.get_channels(**{f'claim_{key}': value}, limit=1)
-            if len(channels) == 1:
-                if for_signing and channels[0].private_key is None:
-                    raise Exception(f"Couldn't find private key for {key} '{value}'. ")
-                return channels[0]
-            elif len(channels) > 1:
-                raise ValueError(
-                    f"Multiple channels found with channel_{key} '{value}', "
-                    f"pass a channel_id to narrow it down."
-                )
+        channels = await self.ledger.get_channels(
+            accounts=self.get_accounts_or_all(account_ids),
+            **{f'claim_{key}': value}
+        )
+        if len(channels) == 1:
+            if for_signing and not channels[0].has_private_key:
+                raise Exception(f"Couldn't find private key for {key} '{value}'. ")
+            return channels[0]
+        elif len(channels) > 1:
+            raise ValueError(
+                f"Multiple channels found with channel_{key} '{value}', "
+                f"pass a channel_id to narrow it down."
+            )
         raise ValueError(f"Couldn't find channel with channel_{key} '{value}'.")
 
     def get_account_or_default(self, account_id: str, argument_name: str = "account", lbc_only=True) -> LBCAccount:

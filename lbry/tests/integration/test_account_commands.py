@@ -1,5 +1,9 @@
+import asyncio
+import sqlite3
 from lbry.testcase import CommandTestCase
+from torba.client.basedatabase import SQLiteMixin
 from lbry.wallet.dewies import dewies_to_lbc
+from lbry.wallet.account import Account
 
 
 def extract(d, keys):
@@ -7,7 +11,6 @@ def extract(d, keys):
 
 
 class AccountManagement(CommandTestCase):
-
     async def test_account_list_set_create_remove_add(self):
         # check initial account
         response = await self.daemon.jsonrpc_account_list()
@@ -168,3 +171,9 @@ class AccountManagement(CommandTestCase):
         })
         self.assertEqual(history[6]['value'], '0.0')
         self.assertEqual(history[7]['value'], '10.0')
+
+    async def test_address_validation(self):
+        address = await self.daemon.jsonrpc_address_unused()
+        bad_address = address[0:20] + '9999999' + address[27:]
+        with self.assertRaisesRegex(Exception, f"'{bad_address}' is not a valid address"):
+            await self.daemon.jsonrpc_account_send('0.1', addresses=[bad_address])

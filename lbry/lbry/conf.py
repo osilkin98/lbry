@@ -148,7 +148,12 @@ class MaxKeyFee(Setting[dict]):
 
     @staticmethod
     def _parse_list(l):
-        assert len(l) == 2, 'Max key fee is made up of two values: "AMOUNT CURRENCY".'
+        if l == ['null']:
+            return None
+        assert len(l) == 2, (
+            'Max key fee is made up of either two values: '
+            '"AMOUNT CURRENCY", or "null" (to set no limit)'
+        )
         try:
             amount = float(l[0])
         except ValueError:
@@ -176,7 +181,7 @@ class MaxKeyFee(Setting[dict]):
         parser.add_argument(
             self.cli_name,
             help=self.doc,
-            nargs=2,
+            nargs='+',
             metavar=('AMOUNT', 'CURRENCY'),
             default=NOT_SET
         )
@@ -527,7 +532,8 @@ class Config(CLIConfig):
         "peers are not found or are slow", 2.0
     )
     max_key_fee = MaxKeyFee(
-        "Don't download streams with fees exceeding this amount", {'currency': 'USD', 'amount': 50.0}
+        "Don't download streams with fees exceeding this amount. When set to "
+        "null, the amount is unbounded.", {'currency': 'USD', 'amount': 50.0}
     )
 
     # reflector settings

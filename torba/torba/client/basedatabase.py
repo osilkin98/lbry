@@ -1,10 +1,9 @@
 import logging
 import asyncio
-from asyncio import wrap_future
 from binascii import hexlify
 from concurrent.futures.thread import ThreadPoolExecutor
 
-from typing import Tuple, List, Union, Callable, Any, Awaitable, Iterable
+from typing import Tuple, List, Union, Callable, Any, Awaitable, Iterable, Dict, Optional
 
 import sqlite3
 
@@ -20,43 +19,48 @@ class AIOSQLite:
         # has to be single threaded as there is no mapping of thread:connection
         self.executor = ThreadPoolExecutor(max_workers=1)
         self.connection: sqlite3.Connection = None
+        self._closing = False
 
     @classmethod
     async def connect(cls, path: Union[bytes, str], *args, **kwargs):
+        def _connect():
+            return sqlite3.connect(path, *args, **kwargs)
         db = cls()
-        db.connection = await wrap_future(db.executor.submit(sqlite3.connect, path, *args, **kwargs))
+        db.connection = await asyncio.get_event_loop().run_in_executor(db.executor, _connect)
         return db
 
     async def close(self):
-        def __close(conn):
-            self.executor.submit(conn.close)
-            self.executor.shutdown(wait=True)
-        conn = self.connection
-        if not conn:
+        if self._closing:
             return
+        self._closing = True
+        await asyncio.get_event_loop().run_in_executor(self.executor, self.connection.close)
+        self.executor.shutdown(wait=True)
         self.connection = None
-        return asyncio.get_event_loop_policy().get_event_loop().call_later(0.01, __close, conn)
 
     def executemany(self, sql: str, params: Iterable):
-        def __executemany_in_a_transaction(conn: sqlite3.Connection, *args, **kwargs):
-            return conn.executemany(*args, **kwargs)
-        return self.run(__executemany_in_a_transaction, sql, params)
+        params = params if params is not None else []
+        # this fetchall is needed to prevent SQLITE_MISUSE
+        return self.run(lambda conn: conn.executemany(sql, params).fetchall())
 
     def executescript(self, script: str) -> Awaitable:
-        return wrap_future(self.executor.submit(self.connection.executescript, script))
+        return self.run(lambda conn: conn.executescript(script))
 
     def execute_fetchall(self, sql: str, parameters: Iterable = None) -> Awaitable[Iterable[sqlite3.Row]]:
         parameters = parameters if parameters is not None else []
-        def __fetchall(conn: sqlite3.Connection, *args, **kwargs):
-            return conn.execute(*args, **kwargs).fetchall()
-        return wrap_future(self.executor.submit(__fetchall, self.connection, sql, parameters))
+        return self.run(lambda conn: conn.execute(sql, parameters).fetchall())
+
+    def execute_fetchone(self, sql: str, parameters: Iterable = None) -> Awaitable[Iterable[sqlite3.Row]]:
+        parameters = parameters if parameters is not None else []
+        return self.run(lambda conn: conn.execute(sql, parameters).fetchone())
 
     def execute(self, sql: str, parameters: Iterable = None) -> Awaitable[sqlite3.Cursor]:
         parameters = parameters if parameters is not None else []
-        return self.run(lambda conn, sql, parameters: conn.execute(sql, parameters), sql, parameters)
+        return self.run(lambda conn: conn.execute(sql, parameters))
 
     def run(self, fun, *args, **kwargs) -> Awaitable:
-        return wrap_future(self.executor.submit(self.__run_transaction, fun, *args, **kwargs))
+        return asyncio.get_event_loop().run_in_executor(
+            self.executor, lambda: self.__run_transaction(fun, *args, **kwargs)
+        )
 
     def __run_transaction(self, fun: Callable[[sqlite3.Connection, Any, Any], Any], *args, **kwargs):
         self.connection.execute('begin')
@@ -64,27 +68,28 @@ class AIOSQLite:
             result = fun(self.connection, *args, **kwargs)  # type: ignore
             self.connection.commit()
             return result
-        except (Exception, OSError): # as e:
-            #log.exception('Error running transaction:', exc_info=e)
+        except (Exception, OSError) as e:
+            log.exception('Error running transaction:', exc_info=e)
             self.connection.rollback()
+            log.warning("rolled back")
             raise
 
     def run_with_foreign_keys_disabled(self, fun, *args, **kwargs) -> Awaitable:
-        return wrap_future(
-            self.executor.submit(self.__run_transaction_with_foreign_keys_disabled, fun, *args, **kwargs)
+        return asyncio.get_event_loop().run_in_executor(
+            self.executor, self.__run_transaction_with_foreign_keys_disabled, fun, args, kwargs
         )
 
     def __run_transaction_with_foreign_keys_disabled(self,
                                                      fun: Callable[[sqlite3.Connection, Any, Any], Any],
-                                                     *args, **kwargs):
+                                                     args, kwargs):
         foreign_keys_enabled, = self.connection.execute("pragma foreign_keys").fetchone()
         if not foreign_keys_enabled:
             raise sqlite3.IntegrityError("foreign keys are disabled, use `AIOSQLite.run` instead")
         try:
-            self.connection.execute('pragma foreign_keys=off')
+            self.connection.execute('pragma foreign_keys=off').fetchone()
             return self.__run_transaction(fun, *args, **kwargs)
         finally:
-            self.connection.execute('pragma foreign_keys=on')
+            self.connection.execute('pragma foreign_keys=on').fetchone()
 
 
 def constraints_to_sql(constraints, joiner=' AND ', prepend_key=''):
@@ -154,7 +159,7 @@ def constraints_to_sql(constraints, joiner=' AND ', prepend_key=''):
     return joiner.join(sql) if sql else '', values
 
 
-def query(select, **constraints):
+def query(select, **constraints) -> Tuple[str, Dict[str, Any]]:
     sql = [select]
     limit = constraints.pop('limit', None)
     offset = constraints.pop('offset', None)
@@ -210,8 +215,15 @@ def rows_to_dict(rows, fields):
 
 class SQLiteMixin:
 
+    SCHEMA_VERSION: Optional[str] = None
     CREATE_TABLES_QUERY: str
     MAX_QUERY_VARIABLES = 900
+
+    CREATE_VERSION_TABLE = """
+        create table if not exists version (
+            version text
+        );
+    """
 
     def __init__(self, path):
         self._db_path = path
@@ -221,6 +233,20 @@ class SQLiteMixin:
     async def open(self):
         log.info("connecting to database: %s", self._db_path)
         self.db = await AIOSQLite.connect(self._db_path, isolation_level=None)
+        if self.SCHEMA_VERSION:
+            tables = [t[0] for t in await self.db.execute_fetchall(
+                "SELECT name FROM sqlite_master WHERE type='table';"
+            )]
+            if tables:
+                if 'version' in tables:
+                    version = await self.db.execute_fetchone("SELECT version FROM version LIMIT 1;")
+                    if version == (self.SCHEMA_VERSION,):
+                        return
+                await self.db.executescript('\n'.join(
+                    f"DROP TABLE {table};" for table in tables
+                ))
+            await self.db.execute(self.CREATE_VERSION_TABLE)
+            await self.db.execute("INSERT INTO version VALUES (?)", (self.SCHEMA_VERSION,))
         await self.db.executescript(self.CREATE_TABLES_QUERY)
 
     async def close(self):
@@ -258,6 +284,8 @@ class SQLiteMixin:
 
 
 class BaseDatabase(SQLiteMixin):
+
+    SCHEMA_VERSION = "1.0"
 
     PRAGMAS = """
         pragma journal_mode=WAL;
@@ -337,34 +365,32 @@ class BaseDatabase(SQLiteMixin):
             'script': sqlite3.Binary(txo.script.source)
         }
 
-    async def insert_transaction(self, tx):
-        await self.db.execute(*self._insert_sql('tx', {
+    @staticmethod
+    def tx_to_row(tx):
+        return {
             'txid': tx.id,
             'raw': sqlite3.Binary(tx.raw),
             'height': tx.height,
             'position': tx.position,
             'is_verified': tx.is_verified
-        }))
+        }
+
+    async def insert_transaction(self, tx):
+        await self.db.execute_fetchall(*self._insert_sql('tx', self.tx_to_row(tx)))
 
     async def update_transaction(self, tx):
-        await self.db.execute(*self._update_sql("tx", {
+        await self.db.execute_fetchall(*self._update_sql("tx", {
             'height': tx.height, 'position': tx.position, 'is_verified': tx.is_verified
         }, 'txid = ?', (tx.id,)))
 
     def _transaction_io(self, conn: sqlite3.Connection, tx: BaseTransaction, address, txhash, history):
-        conn.execute(*self._insert_sql('tx', {
-            'txid': tx.id,
-            'raw': sqlite3.Binary(tx.raw),
-            'height': tx.height,
-            'position': tx.position,
-            'is_verified': tx.is_verified
-        }, replace=True))
+        conn.execute(*self._insert_sql('tx', self.tx_to_row(tx), replace=True))
 
         for txo in tx.outputs:
             if txo.script.is_pay_pubkey_hash and txo.script.values['pubkey_hash'] == txhash:
                 conn.execute(*self._insert_sql(
                     "txo", self.txo_to_row(tx, address, txo), ignore_duplicate=True
-                ))
+                )).fetchall()
             elif txo.script.is_pay_script_hash:
                 # TODO: implement script hash payments
                 log.warning('Database.save_transaction_io: pay script hash is not implemented!')
@@ -377,7 +403,7 @@ class BaseDatabase(SQLiteMixin):
                         'txid': tx.id,
                         'txoid': txo.id,
                         'address': address,
-                    }, ignore_duplicate=True))
+                    }, ignore_duplicate=True)).fetchall()
 
         conn.execute(
             "UPDATE pubkey_address SET history = ?, used_times = ? WHERE address = ?",
@@ -584,13 +610,15 @@ class BaseDatabase(SQLiteMixin):
     async def add_keys(self, account, chain, keys):
         await self.db.executemany(
             "insert into pubkey_address (address, account, chain, position, pubkey) values (?, ?, ?, ?, ?)",
-            ((pubkey.address, account.public_key.address, chain,
-              position, sqlite3.Binary(pubkey.pubkey_bytes))
-             for position, pubkey in keys)
+            (
+                (pubkey.address, account.public_key.address, chain, position,
+                 sqlite3.Binary(pubkey.pubkey_bytes))
+                for position, pubkey in keys
+            )
         )
 
     async def _set_address_history(self, address, history):
-        await self.db.execute(
+        await self.db.execute_fetchall(
             "UPDATE pubkey_address SET history = ?, used_times = ? WHERE address = ?",
             (history, history.count(':')//2, address)
         )

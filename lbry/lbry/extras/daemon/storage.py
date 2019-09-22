@@ -182,13 +182,13 @@ def delete_stream(transaction: sqlite3.Connection, descriptor: 'StreamDescriptor
 
 def store_file(transaction: sqlite3.Connection, stream_hash: str, file_name: typing.Optional[str],
                download_directory: typing.Optional[str], data_payment_rate: float, status: str,
-               content_fee: typing.Optional[Transaction]) -> int:
+               content_fee: typing.Optional[Transaction], added_at: typing.Optional[int] = None) -> int:
     if not file_name and not download_directory:
         encoded_file_name, encoded_download_dir = None, None
     else:
         encoded_file_name = binascii.hexlify(file_name.encode()).decode()
         encoded_download_dir = binascii.hexlify(download_directory.encode()).decode()
-    time_added = int(time.time())
+    time_added = added_at or int(time.time())
     transaction.execute(
         "insert or replace into file values (?, ?, ?, ?, ?, ?, ?, ?)",
         (stream_hash, encoded_file_name, encoded_download_dir, data_payment_rate, status,
@@ -454,18 +454,20 @@ class SQLiteStorage(SQLiteMixin):
 
     def save_downloaded_file(self, stream_hash: str, file_name: typing.Optional[str],
                              download_directory: typing.Optional[str], data_payment_rate: float,
-                             content_fee: typing.Optional[Transaction] = None) -> typing.Awaitable[int]:
+                             content_fee: typing.Optional[Transaction] = None,
+                             added_at: typing.Optional[int] = None) -> typing.Awaitable[int]:
         return self.save_published_file(
             stream_hash, file_name, download_directory, data_payment_rate, status="running",
-            content_fee=content_fee
+            content_fee=content_fee, added_at=added_at
         )
 
     def save_published_file(self, stream_hash: str, file_name: typing.Optional[str],
                             download_directory: typing.Optional[str], data_payment_rate: float,
                             status: str = "finished",
-                            content_fee: typing.Optional[Transaction] = None) -> typing.Awaitable[int]:
+                            content_fee: typing.Optional[Transaction] = None,
+                            added_at: typing.Optional[int] = None) -> typing.Awaitable[int]:
         return self.db.run(store_file, stream_hash, file_name, download_directory, data_payment_rate, status,
-                           content_fee)
+                           content_fee, added_at)
 
     async def update_manually_removed_files_since_last_run(self):
         """

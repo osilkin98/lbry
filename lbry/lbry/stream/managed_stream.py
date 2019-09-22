@@ -1,5 +1,6 @@
 import os
 import asyncio
+import time
 import typing
 import logging
 import binascii
@@ -255,8 +256,9 @@ class ManagedStream:
                 file_name, download_dir = self._file_name, self.download_directory
             else:
                 file_name, download_dir = None, None
+            self._added_at = int(time.time())
             self.rowid = await self.blob_manager.storage.save_downloaded_file(
-                self.stream_hash, file_name, download_dir, 0.0
+                self.stream_hash, file_name, download_dir, 0.0, added_at=self._added_at
             )
         if self.status != self.STATUS_RUNNING:
             await self.update_status(self.STATUS_RUNNING)

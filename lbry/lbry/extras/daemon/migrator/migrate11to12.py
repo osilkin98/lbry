@@ -21,17 +21,17 @@ def do_migration(conf):
     cursor.execute("pragma foreign_keys=off")
 
     # we don't have any indexes, views or triggers, so step 3 is skipped.
-    cursor.execute("DROP TABLE IF EXISTS NEW_TABLE")
+    cursor.execute("drop table if exists new_file")
     cursor.execute("""
-        CREATE TABLE IF NOT EXISTS NEW_FILE (
-            stream_hash         TEXT PRIMARY KEY NOT NULL REFERENCES stream,
-            file_name           TEXT,
-            download_directory  TEXT,
-            blob_data_rate      REAL NOT NULL,
-            status              TEXT NOT NULL,
-            saved_file          INTEGER NOT NULL,
-            content_fee         TEXT,
-            added_at            INTEGER NOT NULL
+        create table if not exists new_file (
+            stream_hash         text    not null    primary key     references stream,
+            file_name           text,
+            download_directory  text,
+            blob_data_rate      text    not null,
+            status              text    not null,
+            saved_file          integer not null,
+            content_fee         text,
+            added_at            integer not null 
         );
         
 
@@ -39,16 +39,16 @@ def do_migration(conf):
 
     # step 5: transfer content from old to new
     cursor.execute("""
-        INSERT INTO NEW_FILE 
-        SELECT file.*, STRFTIME('%s', 'now') 
-        FROM file
+        insert into new_file 
+        select file.*, strftime('%s', 'now') 
+        from file
     """)
 
     # step 6: drop old table
-    cursor.execute("DROP TABLE main.file")
+    cursor.execute("drop table file")
 
     # step 7: rename new table to old table
-    cursor.execute("ALTER TABLE NEW_FILE RENAME TO file")
+    cursor.execute("alter table new_file rename to file")
 
     # step 8: we aren't using indexes, views or triggers so skip
     # step 9: no views so skip

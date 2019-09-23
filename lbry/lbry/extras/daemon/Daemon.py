@@ -14,7 +14,7 @@ from typing import Callable, Optional, List
 from binascii import hexlify, unhexlify
 from traceback import format_exc
 from aiohttp import web
-from functools import wraps
+from functools import wraps, partial
 from google.protobuf.message import DecodeError
 from torba.client.wallet import Wallet
 from torba.client.baseaccount import SingleKey, HierarchicalDeterministic
@@ -638,20 +638,6 @@ class Daemon(metaclass=JSONRPCServerType):
         return None, None
 
     @property
-    def default_wallet(self):
-        try:
-            return self.wallet_manager.default_wallet
-        except AttributeError:
-            return None
-
-    @property
-    def default_account(self) -> Optional[LBCAccount]:
-        try:
-            return self.wallet_manager.default_account
-        except AttributeError:
-            return None
-
-    @property
     def ledger(self) -> Optional['MainNetLedger']:
         try:
             return self.wallet_manager.default_account.ledger
@@ -1008,67 +994,171 @@ class Daemon(metaclass=JSONRPCServerType):
     Preferences management.
     """
 
-    def jsonrpc_preference_get(self, key=None, account_id=None):
+    def jsonrpc_preference_get(self, key=None, account_id=None, wallet_id=None):
         """
         Get preference value for key or all values if not key is passed in.
 
         Usage:
-            preference_get [<key>]
+            preference_get [<key>] [--wallet_id=<wallet_id>]
 
         Options:
             --key=<key> : (str) key associated with value
             --account_id=<account_id> : (str) id of the account containing value
+            --wallet_id=<wallet_id>   : (str) restrict operation to specific wallet
 
         Returns:
             (dict) Dictionary of preference(s)
         """
-        account = self.get_account_or_default(account_id)
+        wallet = self.wallet_manager.get_wallet_or_default(wallet_id)
+        account = wallet.get_account_or_default(account_id)
         if key:
             if key in account.preferences:
                 return {key: account.preferences[key]}
             return
         return account.preferences
 
-    def jsonrpc_preference_set(self, key, value, account_id=None):
+    def jsonrpc_preference_set(self, key, value, account_id=None, wallet_id=None):
         """
         Set preferences
 
         Usage:
-            preference_set (<key>) (<value>)
+            preference_set (<key>) (<value>) [--wallet_id=<wallet_id>]
 
         Options:
             --key=<key> : (str) key associated with value
             --value=<key> : (str) key associated with value
             --account_id=<account_id> : (str) id of the account containing value
+            --wallet_id=<wallet_id>   : (str) restrict operation to specific wallet
 
         Returns:
             (dict) Dictionary with key/value of new preference
         """
-        account = self.get_account_or_default(account_id)
+        wallet = self.wallet_manager.get_wallet_or_default(wallet_id)
+        account = wallet.get_account_or_default(account_id)
         if value and isinstance(value, str) and value[0] in ('[', '{'):
             value = json.loads(value)
         account.preferences[key] = value
         account.modified_on = time.time()
-        self.default_wallet.save()
+        wallet.save()
         return {key: value}
+
+    WALLET_DOC = """
+    Create, modify and inspect wallets.
+    """
+
+    @requires("wallet")
+    def jsonrpc_wallet_list(self, wallet_id=None):
+        """
+        List wallets.
+
+        Usage:
+            wallet_list [--wallet_id=<wallet_id>]
+
+        Options:
+            --wallet_id=<wallet_id>  : (str) show specific wallet only
+
+        Returns: {List[Wallet]}
+        """
+        if wallet_id:
+            return [self.wallet_manager.get_wallet_or_error(wallet_id)]
+        return self.wallet_manager.wallets
+
+    @requires("wallet")
+    async def jsonrpc_wallet_create(
+            self, wallet_id, skip_on_startup=False, create_account=False, single_key=False):
+        """
+        Create a new wallet.
+
+        Usage:
+            wallet_create (<wallet_id> | --wallet_id=<wallet_id>) [--skip_on_startup]
+                          [--create_account] [--single_key]
+
+        Options:
+            --wallet_id=<wallet_id>  : (str) wallet file name
+            --skip_on_startup        : (bool) don't add wallet to daemon_settings.yml
+            --create_account         : (bool) generates the default account
+            --single_key             : (bool) used with --create_account, creates single-key account
+
+        Returns: {Wallet}
+        """
+        wallet_path = os.path.join(self.conf.wallet_dir, 'wallets', wallet_id)
+        for wallet in self.wallet_manager.wallets:
+            if wallet.id == wallet_id:
+                raise Exception(f"Wallet at path '{wallet_path}' already exists and is loaded.")
+        if os.path.exists(wallet_path):
+            raise Exception(f"Wallet at path '{wallet_path}' already exists, use 'wallet_add' to load wallet.")
+
+        wallet = self.wallet_manager.import_wallet(wallet_path)
+        if not wallet.accounts and create_account:
+            account = LBCAccount.generate(
+                self.ledger, wallet, address_generator={
+                    'name': SingleKey.name if single_key else HierarchicalDeterministic.name
+                }
+            )
+            if self.ledger.network.is_connected:
+                await self.ledger.subscribe_account(account)
+        wallet.save()
+        if not skip_on_startup:
+            with self.conf.update_config() as c:
+                c.wallets += [wallet_id]
+        return wallet
+
+    @requires("wallet")
+    async def jsonrpc_wallet_add(self, wallet_id):
+        """
+        Add existing wallet.
+
+        Usage:
+            wallet_add (<wallet_id> | --wallet_id=<wallet_id>)
+
+        Options:
+            --wallet_id=<wallet_id>  : (str) wallet file name
+
+        Returns: {Wallet}
+        """
+        wallet_path = os.path.join(self.conf.wallet_dir, 'wallets', wallet_id)
+        for wallet in self.wallet_manager.wallets:
+            if wallet.id == wallet_id:
+                raise Exception(f"Wallet at path '{wallet_path}' is already loaded.")
+        if not os.path.exists(wallet_path):
+            raise Exception(f"Wallet at path '{wallet_path}' was not found.")
+        return self.wallet_manager.import_wallet(wallet_path)
+
+    @requires("wallet")
+    def jsonrpc_wallet_remove(self, wallet_id):
+        """
+        Remove an existing wallet.
+
+        Usage:
+            wallet_remove (<wallet_id> | --wallet_id=<wallet_id>)
+
+        Options:
+            --wallet_id=<wallet_id>    : (str) name of wallet to remove
+
+        Returns: {Wallet}
+        """
+        wallet = self.wallet_manager.get_wallet_or_default(wallet_id)
+        return self.wallet_manager.wallets.pop(wallet)
 
     ACCOUNT_DOC = """
     Create, modify and inspect wallet accounts.
     """
 
     @requires("wallet")
-    def jsonrpc_account_list(self, account_id=None, confirmations=0,
+    def jsonrpc_account_list(self, account_id=None, wallet_id=None, confirmations=0,
                              include_claims=False, show_seed=False):
         """
         List details of all of the accounts or a specific account.
 
         Usage:
-            account_list [<account_id>] [--confirmations=<confirmations>]
+            account_list [<account_id>] [--wallet_id=<wallet_id>]
+                         [--confirmations=<confirmations>]
                          [--include_claims] [--show_seed]
 
         Options:
             --account_id=<account_id>       : (str) If provided only the balance for this
                                                     account will be given
+            --wallet_id=<wallet_id>         : (str) accounts in specific wallet
             --confirmations=<confirmations> : (int) required confirmations (default: 0)
             --include_claims                : (bool) include claims, requires than a
                                                      LBC account is specified (default: false)
@@ -1080,23 +1170,25 @@ class Daemon(metaclass=JSONRPCServerType):
             'confirmations': confirmations,
             'show_seed': show_seed
         }
+        wallet = self.wallet_manager.get_wallet_or_default(wallet_id)
         if account_id:
-            return self.get_account_or_error(account_id).get_details(**kwargs)
+            return wallet.get_account_or_error(account_id).get_details(**kwargs)
         else:
-            return self.wallet_manager.get_detailed_accounts(**kwargs)
+            return wallet.get_detailed_accounts(**kwargs)
 
     @requires("wallet")
-    async def jsonrpc_account_balance(self, account_id=None, confirmations=0, reserved_subtotals=False):
+    async def jsonrpc_account_balance(self, account_id=None, wallet_id=None, confirmations=0, reserved_subtotals=False):
         """
         Return the balance of an account
 
         Usage:
-            account_balance [<account_id>] [<address> | --address=<address>]
+            account_balance [<account_id>] [<address> | --address=<address>] [--wallet_id=<wallet_id>]
                             [<confirmations> | --confirmations=<confirmations>] [--reserved_subtotals]
 
         Options:
             --account_id=<account_id>       : (str) If provided only the balance for this
                                               account will be given. Otherwise default account.
+            --wallet_id=<wallet_id>         : (str) balance for specific wallet
             --confirmations=<confirmations> : (int) Only include transactions with this many
                                               confirmed blocks.
             --reserved_subtotals            : (bool) Include detailed reserved balances on
@@ -1105,12 +1197,14 @@ class Daemon(metaclass=JSONRPCServerType):
         Returns:
             (decimal) amount of lbry credits in wallet
         """
-        account = self.get_account_or_default(account_id)
+        wallet = self.wallet_manager.get_wallet_or_default(wallet_id)
+        account = wallet.get_account_or_default(account_id)
         return await account.get_granular_balances(confirmations=confirmations, reserved_subtotals=reserved_subtotals)
 
     @requires("wallet")
     async def jsonrpc_account_add(
-            self, account_name, single_key=False, seed=None, private_key=None, public_key=None):
+            self, account_name, wallet_id=None, single_key=False,
+            seed=None, private_key=None, public_key=None):
         """
         Add a previously created account from a seed, private key or public key (read-only).
         Specify --single_key for single address or vanity address accounts.
@@ -1118,7 +1212,7 @@ class Daemon(metaclass=JSONRPCServerType):
         Usage:
             account_add (<account_name> | --account_name=<account_name>)
                  (--seed=<seed> | --private_key=<private_key> | --public_key=<public_key>)
-                 [--single_key]
+                 [--single_key] [--wallet_id=<wallet_id>]
 
         Options:
             --account_name=<account_name>  : (str) name of the account to add
@@ -1126,11 +1220,13 @@ class Daemon(metaclass=JSONRPCServerType):
             --private_key=<private_key>    : (str) private key for new account
             --public_key=<public_key>      : (str) public key for new account
             --single_key                   : (bool) create single key account, default is multi-key
+            --wallet_id=<wallet_id>        : (str) restrict operation to specific wallet
 
         Returns: {Account}
         """
+        wallet = self.wallet_manager.get_wallet_or_default(wallet_id)
         account = LBCAccount.from_dict(
-            self.ledger, self.default_wallet, {
+            self.ledger, wallet, {
                 'name': account_name,
                 'seed': seed,
                 'private_key': private_key,
@@ -1140,75 +1236,75 @@ class Daemon(metaclass=JSONRPCServerType):
                 }
             }
         )
-
+        wallet.save()
         if self.ledger.network.is_connected:
             await self.ledger.subscribe_account(account)
-
-        self.default_wallet.save()
-
         return account
 
     @requires("wallet")
-    async def jsonrpc_account_create(self, account_name, single_key=False):
+    async def jsonrpc_account_create(self, account_name, single_key=False, wallet_id=None):
         """
         Create a new account. Specify --single_key if you want to use
         the same address for all transactions (not recommended).
 
         Usage:
-            account_create (<account_name> | --account_name=<account_name>) [--single_key]
+            account_create (<account_name> | --account_name=<account_name>)
+                           [--single_key] [--wallet_id=<wallet_id>]
 
         Options:
             --account_name=<account_name>  : (str) name of the account to create
             --single_key                   : (bool) create single key account, default is multi-key
+            --wallet_id=<wallet_id>        : (str) restrict operation to specific wallet
 
         Returns: {Account}
         """
+        wallet = self.wallet_manager.get_wallet_or_default(wallet_id)
         account = LBCAccount.generate(
-            self.ledger, self.default_wallet, account_name, {
+            self.ledger, wallet, account_name, {
                 'name': SingleKey.name if single_key else HierarchicalDeterministic.name
             }
         )
-
+        wallet.save()
         if self.ledger.network.is_connected:
             await self.ledger.subscribe_account(account)
-
-        self.default_wallet.save()
-
         return account
 
     @requires("wallet")
-    def jsonrpc_account_remove(self, account_id):
+    def jsonrpc_account_remove(self, account_id, wallet_id=None):
         """
         Remove an existing account.
 
         Usage:
-            account_remove (<account_id> | --account_id=<account_id>)
+            account_remove (<account_id> | --account_id=<account_id>) [--wallet_id=<wallet_id>]
 
         Options:
             --account_id=<account_id>  : (str) id of the account to remove
+            --wallet_id=<wallet_id>    : (str) restrict operation to specific wallet
 
         Returns: {Account}
         """
-        account = self.get_account_or_error(account_id)
-        self.default_wallet.accounts.remove(account)
-        self.default_wallet.save()
+        wallet = self.wallet_manager.get_wallet_or_default(wallet_id)
+        account = wallet.get_account_or_error(account_id)
+        wallet.accounts.remove(account)
+        wallet.save()
         return account
 
     @requires("wallet")
     def jsonrpc_account_set(
-            self, account_id, default=False, new_name=None,
+            self, account_id, wallet_id=None, default=False, new_name=None,
             change_gap=None, change_max_uses=None, receiving_gap=None, receiving_max_uses=None):
         """
         Change various settings on an account.
 
         Usage:
-            account_set (<account_id> | --account_id=<account_id>)
+            account_set (<account_id> | --account_id=<account_id>) [--wallet_id=<wallet_id>]
                 [--default] [--new_name=<new_name>]
                 [--change_gap=<change_gap>] [--change_max_uses=<change_max_uses>]
                 [--receiving_gap=<receiving_gap>] [--receiving_max_uses=<receiving_max_uses>]
 
         Options:
             --account_id=<account_id>       : (str) id of the account to change
+            --wallet_id=<wallet_id>         : (str) restrict operation to specific wallet
             --default                       : (bool) make this account the default
             --new_name=<new_name>           : (str) new name for the account
             --receiving_gap=<receiving_gap> : (int) set the gap for receiving addresses
@@ -1220,7 +1316,8 @@ class Daemon(metaclass=JSONRPCServerType):
 
         Returns: {Account}
         """
-        account = self.get_account_or_error(account_id)
+        wallet = self.wallet_manager.get_wallet_or_default(wallet_id)
+        account = wallet.get_account_or_error(account_id)
         change_made = False
 
         if account.receiving.name == HierarchicalDeterministic.name:
@@ -1240,96 +1337,106 @@ class Daemon(metaclass=JSONRPCServerType):
             change_made = True
 
         if default:
-            self.default_wallet.accounts.remove(account)
-            self.default_wallet.accounts.insert(0, account)
+            wallet.accounts.remove(account)
+            wallet.accounts.insert(0, account)
             change_made = True
 
         if change_made:
             account.modified_on = time.time()
-            self.default_wallet.save()
+            wallet.save()
 
         return account
 
     @requires(WALLET_COMPONENT)
-    def jsonrpc_account_unlock(self, password, account_id=None):
+    def jsonrpc_account_unlock(self, password, account_id=None, wallet_id=None):
         """
         Unlock an encrypted account
 
         Usage:
-            account_unlock (<password> | --password=<password>) [<account_id> | --account_id=<account_id>]
+            account_unlock (<password> | --password=<password>)
+                           [<account_id> | --account_id=<account_id>]
+                           [--wallet_id=<wallet_id>]
 
         Options:
-            --password=<password>        : (str) password to use for unlocking
-            --account_id=<account_id>    : (str) id for the account to unlock, unlocks default account
-                                                 if not provided
+            --password=<password>      : (str) password to use for unlocking
+            --account_id=<account_id>  : (str) id for the account to unlock, unlocks default account
+                                               if not provided
+            --wallet_id=<wallet_id>    : (str) restrict operation to specific wallet
 
         Returns:
             (bool) true if account is unlocked, otherwise false
         """
-
+        wallet = self.wallet_manager.get_wallet_or_default(wallet_id)
         return self.wallet_manager.unlock_account(
-            password, self.get_account_or_default(account_id, lbc_only=False)
+            password, wallet.get_account_or_default(account_id)
         )
 
     @requires(WALLET_COMPONENT)
-    def jsonrpc_account_lock(self, account_id=None):
+    def jsonrpc_account_lock(self, account_id=None, wallet_id=None):
         """
         Lock an unlocked account
 
         Usage:
-            account_lock [<account_id> | --account_id=<account_id>]
+            account_lock [<account_id> | --account_id=<account_id>] [--wallet_id=<wallet_id>]
 
         Options:
-            --account_id=<account_id>        : (str) id for the account to lock
+            --account_id=<account_id>  : (str) id for the account to lock
+            --wallet_id=<wallet_id>    : (str) restrict operation to specific wallet
 
         Returns:
             (bool) true if account is locked, otherwise false
         """
-
-        return self.wallet_manager.lock_account(self.get_account_or_default(account_id, lbc_only=False))
+        wallet = self.wallet_manager.get_wallet_or_default(wallet_id)
+        return self.wallet_manager.lock_account(
+            wallet.get_account_or_default(account_id)
+        )
 
     @requires(WALLET_COMPONENT, conditions=[WALLET_IS_UNLOCKED])
-    def jsonrpc_account_decrypt(self, account_id=None):
+    def jsonrpc_account_decrypt(self, account_id=None, wallet_id=None):
         """
         Decrypt an encrypted account, this will remove the wallet password. The account must be unlocked to decrypt it
 
         Usage:
-            account_decrypt [<account_id> | --account_id=<account_id>]
+            account_decrypt [<account_id> | --account_id=<account_id>] [--wallet_id=<wallet_id>]
 
         Options:
             --account_id=<account_id>  : (str) id for the account to decrypt
+            --wallet_id=<wallet_id>    : (str) restrict operation to specific wallet
 
         Returns:
             (bool) true if wallet is decrypted, otherwise false
         """
-
-        return self.wallet_manager.decrypt_account(self.get_account_or_default(account_id, lbc_only=False))
+        wallet = self.wallet_manager.get_wallet_or_default(wallet_id)
+        return self.wallet_manager.decrypt_account(
+            wallet.get_account_or_default(account_id)
+        )
 
     @requires(WALLET_COMPONENT, conditions=[WALLET_IS_UNLOCKED])
-    def jsonrpc_account_encrypt(self, new_password, account_id=None):
+    def jsonrpc_account_encrypt(self, new_password, account_id=None, wallet_id=None):
         """
         Encrypt an unencrypted account with a password
 
         Usage:
             account_encrypt (<new_password> | --new_password=<new_password>)
                             [<account_id> | --account_id=<account_id>]
+                            [--wallet_id=<wallet_id>]
 
         Options:
-            --new_password=<new_password>    : (str) password to encrypt account
-            --account_id=<account_id>        : (str) id for the account to encrypt, encrypts
-                                                     default account if not provided
+            --new_password=<new_password>  : (str) password to encrypt account
+            --account_id=<account_id>      : (str) id for the account to encrypt, encrypts
+                                                   default account if not provided
+            --wallet_id=<wallet_id>        : (str) restrict operation to specific wallet
 
         Returns:
             (bool) true if wallet is decrypted, otherwise false
         """
-
+        wallet = self.wallet_manager.get_wallet_or_default(wallet_id)
         return self.wallet_manager.encrypt_account(
-            new_password,
-            self.get_account_or_default(account_id, lbc_only=False)
+            new_password, wallet.get_account_or_default(account_id)
         )
 
     @requires("wallet")
-    def jsonrpc_account_max_address_gap(self, account_id):
+    def jsonrpc_account_max_address_gap(self, account_id, wallet_id=None):
         """
         Finds ranges of consecutive addresses that are unused and returns the length
         of the longest such range: for change and receiving address chains. This is
@@ -1338,18 +1445,21 @@ class Daemon(metaclass=JSONRPCServerType):
 
         Usage:
             account_max_address_gap (<account_id> | --account_id=<account_id>)
+                                    [--wallet_id=<wallet_id>]
 
         Options:
-            --account_id=<account_id>        : (str) account for which to get max gaps
+            --account_id=<account_id>  : (str) account for which to get max gaps
+            --wallet_id=<wallet_id>    : (str) restrict operation to specific wallet
 
         Returns:
             (map) maximum gap for change and receiving addresses
         """
-        return self.get_account_or_error(account_id).get_max_gap()
+        wallet = self.wallet_manager.get_wallet_or_default(wallet_id)
+        return wallet.get_account_or_error(account_id).get_max_gap()
 
     @requires("wallet")
     def jsonrpc_account_fund(self, to_account=None, from_account=None, amount='0.0',
-                             everything=False, outputs=1, broadcast=False):
+                             everything=False, outputs=1, broadcast=False, wallet_id=None):
         """
         Transfer some amount (or --everything) to an account from another
         account (can be the same account). Amounts are interpreted as LBC.
@@ -1360,7 +1470,7 @@ class Daemon(metaclass=JSONRPCServerType):
             account_fund [<to_account> | --to_account=<to_account>]
                 [<from_account> | --from_account=<from_account>]
                 (<amount> | --amount=<amount> | --everything)
-                [<outputs> | --outputs=<outputs>]
+                [<outputs> | --outputs=<outputs>] [--wallet_id=<wallet_id>]
                 [--broadcast]
 
         Options:
@@ -1369,12 +1479,14 @@ class Daemon(metaclass=JSONRPCServerType):
             --amount=<amount>             : (str) the amount to transfer lbc
             --everything                  : (bool) transfer everything (excluding claims), default: false.
             --outputs=<outputs>           : (int) split payment across many outputs, default: 1.
+            --wallet_id=<wallet_id>       : (str) limit operation to specific wallet.
             --broadcast                   : (bool) actually broadcast the transaction, default: false.
 
         Returns: {Transaction}
         """
-        to_account = self.get_account_or_default(to_account, 'to_account')
-        from_account = self.get_account_or_default(from_account, 'from_account')
+        wallet = self.wallet_manager.get_wallet_or_default(wallet_id)
+        to_account = wallet.get_account_or_default(to_account)
+        from_account = wallet.get_account_or_default(from_account)
         amount = self.get_dewies_or_error('amount', amount) if amount else None
         if not isinstance(outputs, int):
             raise ValueError("--outputs must be an integer.")
@@ -1386,20 +1498,22 @@ class Daemon(metaclass=JSONRPCServerType):
         )
 
     @requires(WALLET_COMPONENT, conditions=[WALLET_IS_UNLOCKED])
-    async def jsonrpc_account_send(self, amount, addresses, account_id=None, preview=False):
+    async def jsonrpc_account_send(self, amount, addresses, account_id=None, wallet_id=None, preview=False):
         """
         Send the same number of credits to multiple addresses.
 
         Usage:
-            account_send <amount> <addresses>... [--account_id=<account_id>] [--preview]
+            account_send <amount> <addresses>... [--account_id=<account_id>] [--wallet_id=<wallet_id>] [--preview]
 
         Options:
             --account_id=<account_id>  : (str) account to fund the transaction
+            --wallet_id=<wallet_id>    : (str) restrict operation to specific wallet
             --preview                  : (bool) do not broadcast the transaction
 
         Returns: {Transaction}
         """
-        account = self.get_account_or_default(account_id)
+        wallet = self.wallet_manager.get_wallet_or_default(wallet_id)
+        account = wallet.get_account_or_default(account_id)
 
         amount = self.get_dewies_or_error("amount", amount)
         if not amount:
@@ -1436,60 +1550,65 @@ class Daemon(metaclass=JSONRPCServerType):
     """
 
     @requires("wallet")
-    def jsonrpc_sync_hash(self):
+    def jsonrpc_sync_hash(self, wallet_id=None):
         """
         Deterministic hash of the wallet.
 
         Usage:
-            sync_hash
+            sync_hash [<wallet_id> | --wallet_id=<wallet_id>]
 
         Options:
+            --wallet_id=<wallet_id>   : (str) wallet for which to generate hash
 
         Returns:
             (str) sha256 hash of wallet
         """
-        return hexlify(self.default_wallet.hash).decode()
+        wallet = self.wallet_manager.get_wallet_or_default(wallet_id)
+        return hexlify(wallet.hash).decode()
 
     @requires("wallet")
-    def jsonrpc_sync_apply(self, password, data=None, encrypt_password=None):
+    def jsonrpc_sync_apply(self, password, data=None, encrypt_password=None, wallet_id=None):
         """
         Apply incoming synchronization data, if provided, and then produce a sync hash and
         an encrypted wallet.
 
         Usage:
             sync_apply <password> [--data=<data>] [--encrypt-password=<encrypt_password>]
+                       [--wallet_id=<wallet_id>]
 
         Options:
             --password=<password>         : (str) password to decrypt incoming and encrypt outgoing data
             --data=<data>                 : (str) incoming sync data, if any
             --encrypt-password=<encrypt_password> : (str) password to encrypt outgoing data if different
                                                     from the decrypt password, used during password changes
+            --wallet_id=<wallet_id>       : (str) wallet being sync'ed
 
         Returns:
             (map) sync hash and data
 
         """
+        wallet = self.wallet_manager.get_wallet_or_default(wallet_id)
         if data is not None:
             decrypted_data = Wallet.unpack(password, data)
             for account_data in decrypted_data['accounts']:
                 _, _, pubkey = LBCAccount.keys_from_dict(self.ledger, account_data)
                 account_id = pubkey.address
                 local_match = None
-                for local_account in self.default_wallet.accounts:
+                for local_account in wallet.accounts:
                     if account_id == local_account.id:
                         local_match = local_account
                         break
                 if local_match is not None:
                     local_match.apply(account_data)
                 else:
-                    new_account = LBCAccount.from_dict(self.ledger, self.default_wallet, account_data)
+                    new_account = LBCAccount.from_dict(self.ledger, wallet, account_data)
                     if self.ledger.network.is_connected:
                         asyncio.create_task(self.ledger.subscribe_account(new_account))
-            self.default_wallet.save()
+            wallet.save()
 
-        encrypted = self.default_wallet.pack(encrypt_password or password)
+        encrypted = wallet.pack(encrypt_password or password)
         return {
-            'hash': self.jsonrpc_sync_hash(),
+            'hash': self.jsonrpc_sync_hash(wallet_id),
             'data': encrypted.decode()
         }
 
@@ -1498,51 +1617,57 @@ class Daemon(metaclass=JSONRPCServerType):
     """
 
     @requires(WALLET_COMPONENT)
-    async def jsonrpc_address_is_mine(self, address, account_id=None):
+    async def jsonrpc_address_is_mine(self, address, account_id=None, wallet_id=None):
         """
         Checks if an address is associated with the current wallet.
 
         Usage:
             address_is_mine (<address> | --address=<address>)
-                                   [<account_id> | --account_id=<account_id>]
+                            [<account_id> | --account_id=<account_id>] [--wallet_id=<wallet_id>]
 
         Options:
             --address=<address>       : (str) address to check
             --account_id=<account_id> : (str) id of the account to use
+            --wallet_id=<wallet_id>   : (str) restrict operation to specific wallet
 
         Returns:
             (bool) true, if address is associated with current wallet
         """
-        account = self.get_account_or_default(account_id)
+        wallet = self.wallet_manager.get_wallet_or_default(wallet_id)
+        account = wallet.get_account_or_default(account_id)
         match = await self.ledger.db.get_address(address=address, accounts=[account])
         if match is not None:
             return True
         return False
 
     @requires(WALLET_COMPONENT)
-    def jsonrpc_address_list(self, address=None, account_id=None, page=None, page_size=None):
+    def jsonrpc_address_list(self, address=None, account_id=None, wallet_id=None, page=None, page_size=None):
         """
         List account addresses or details of single address.
 
         Usage:
-            address_list [--address=<address>] [--account_id=<account_id>]
+            address_list [--address=<address>] [--account_id=<account_id>] [--wallet_id=<wallet_id>]
                          [--page=<page>] [--page_size=<page_size>]
 
         Options:
             --address=<address>        : (str) just show details for single address
             --account_id=<account_id>  : (str) id of the account to use
+            --wallet_id=<wallet_id>    : (str) restrict operation to specific wallet
             --page=<page>              : (int) page to return during paginating
             --page_size=<page_size>    : (int) number of items on page during pagination
 
         Returns: {Paginated[Address]}
         """
+        wallet = self.wallet_manager.get_wallet_or_default(wallet_id)
         constraints = {
-            'cols': ('address', 'account', 'used_times')
+            'cols': ('address', 'account', 'used_times', 'pubkey', 'chain_code', 'n', 'depth')
         }
         if address:
             constraints['address'] = address
         if account_id:
-            constraints['accounts'] = [self.get_account_or_error(account_id)]
+            constraints['accounts'] = [wallet.get_account_or_error(account_id)]
+        else:
+            constraints['accounts'] = wallet.accounts
         return maybe_paginate(
             self.ledger.get_addresses,
             self.ledger.get_address_count,
@@ -1550,20 +1675,22 @@ class Daemon(metaclass=JSONRPCServerType):
         )
 
     @requires(WALLET_COMPONENT)
-    def jsonrpc_address_unused(self, account_id=None):
+    def jsonrpc_address_unused(self, account_id=None, wallet_id=None):
         """
         Return an address containing no balance, will create
         a new address if there is none.
 
         Usage:
-            address_unused [--account_id=<account_id>]
+            address_unused [--account_id=<account_id>] [--wallet_id=<wallet_id>]
 
         Options:
             --account_id=<account_id> : (str) id of the account to use
+            --wallet_id=<wallet_id>   : (str) restrict operation to specific wallet
 
         Returns: {Address}
         """
-        return self.get_account_or_default(account_id).receiving.get_or_create_usable_address()
+        wallet = self.wallet_manager.get_wallet_or_default(wallet_id)
+        return wallet.get_account_or_default(account_id).receiving.get_or_create_usable_address()
 
     FILE_DOC = """
     File management.
@@ -1749,28 +1876,30 @@ class Daemon(metaclass=JSONRPCServerType):
     """
 
     @requires(WALLET_COMPONENT)
-    def jsonrpc_claim_list(self, account_id=None, page=None, page_size=None):
+    def jsonrpc_claim_list(self, account_id=None, wallet_id=None, page=None, page_size=None):
         """
         List my stream and channel claims.
 
         Usage:
-            claim_list [<account_id> | --account_id=<account_id>]
+            claim_list [<account_id> | --account_id=<account_id>] [--wallet_id=<wallet_id>]
                        [--page=<page>] [--page_size=<page_size>]
 
         Options:
-            --account_id=<account_id> : (str) id of the account to query
+            --account_id=<account_id>  : (str) id of the account to query
+            --wallet_id=<wallet_id>    : (str) restrict results to specific wallet
             --page=<page>              : (int) page to return during paginating
             --page_size=<page_size>    : (int) number of items on page during pagination
 
         Returns: {Paginated[Output]}
         """
+        wallet = self.wallet_manager.get_wallet_or_default(wallet_id)
         if account_id:
-            account = self.get_account_or_error(account_id)
+            account: LBCAccount = wallet.get_account_or_error(account_id)
             claims = account.get_claims
             claim_count = account.get_claim_count
         else:
-            claims = self.ledger.get_claims
-            claim_count = self.ledger.get_claim_count
+            claims = partial(self.ledger.get_claims, wallet=wallet, accounts=wallet.accounts)
+            claim_count = partial(self.ledger.get_claim_count, wallet=wallet, accounts=wallet.accounts)
         return maybe_paginate(claims, claim_count, page, page_size)
 
     @requires(WALLET_COMPONENT)
@@ -1922,8 +2051,8 @@ class Daemon(metaclass=JSONRPCServerType):
 
     @requires(WALLET_COMPONENT, conditions=[WALLET_IS_UNLOCKED])
     async def jsonrpc_channel_create(
-            self, name, bid, allow_duplicate_name=False, account_id=None, claim_address=None,
-            funding_account_ids=None, preview=False, blocking=False, **kwargs):
+            self, name, bid, allow_duplicate_name=False, account_id=None, wallet_id=None,
+            claim_address=None, funding_account_ids=None, preview=False, blocking=False, **kwargs):
         """
         Create a new channel by generating a channel private key and establishing an '@' prefixed claim.
 
@@ -1934,8 +2063,8 @@ class Daemon(metaclass=JSONRPCServerType):
                            [--website_url=<website_url>] [--featured=<featured>...]
                            [--tags=<tags>...] [--languages=<languages>...] [--locations=<locations>...]
                            [--thumbnail_url=<thumbnail_url>] [--cover_url=<cover_url>]
-                           [--account_id=<account_id>] [--claim_address=<claim_address>]
-                           [--funding_account_ids=<funding_account_ids>...]
+                           [--account_id=<account_id>] [--wallet_id=<wallet_id>]
+                           [--claim_address=<claim_address>] [--funding_account_ids=<funding_account_ids>...]
                            [--preview] [--blocking]
 
         Options:
@@ -1990,6 +2119,7 @@ class Daemon(metaclass=JSONRPCServerType):
             --thumbnail_url=<thumbnail_url>: (str) thumbnail url
             --cover_url=<cover_url>        : (str) url of cover image
             --account_id=<account_id>      : (str) account to use for holding the transaction
+            --wallet_id=<wallet_id>        : (str) restrict operation to specific wallet
           --funding_account_ids=<funding_account_ids>: (list) ids of accounts to fund this transaction
             --claim_address=<claim_address>: (str) address where the channel is sent to, if not specified
                                                    it will be determined automatically from the account
@@ -1998,13 +2128,14 @@ class Daemon(metaclass=JSONRPCServerType):
 
         Returns: {Transaction}
         """
-        account = self.get_account_or_default(account_id)
-        funding_accounts = self.get_accounts_or_all(funding_account_ids)
+        wallet = self.wallet_manager.get_wallet_or_default(wallet_id)
+        account = wallet.get_account_or_default(account_id)
+        funding_accounts = wallet.get_accounts_or_all(funding_account_ids)
         self.valid_channel_name_or_error(name)
         amount = self.get_dewies_or_error('bid', bid, positive_value=True)
         claim_address = await self.get_receiving_address(claim_address, account)
 
-        existing_channels = await account.get_channels(claim_name=name)
+        existing_channels = await self.ledger.get_channels(accounts=wallet.accounts, claim_name=name)
         if len(existing_channels) > 0:
             if not allow_duplicate_name:
                 raise Exception(
@@ -2023,7 +2154,7 @@ class Daemon(metaclass=JSONRPCServerType):
         if not preview:
             await tx.sign(funding_accounts)
             account.add_channel_private_key(txo.private_key)
-            self.default_wallet.save()
+            wallet.save()
             await self.broadcast_or_release(tx, blocking)
             await self.storage.save_claims([self._old_get_temp_claim_info(
                 tx, txo, claim_address, claim, name, dewies_to_lbc(amount)
@@ -2036,7 +2167,7 @@ class Daemon(metaclass=JSONRPCServerType):
 
     @requires(WALLET_COMPONENT, conditions=[WALLET_IS_UNLOCKED])
     async def jsonrpc_channel_update(
-            self, claim_id, bid=None, account_id=None, claim_address=None,
+            self, claim_id, bid=None, account_id=None, wallet_id=None, claim_address=None,
             funding_account_ids=None, new_signing_key=False, preview=False,
             blocking=False, replace=False, **kwargs):
         """
@@ -2051,7 +2182,8 @@ class Daemon(metaclass=JSONRPCServerType):
                            [--languages=<languages>...] [--clear_languages]
                            [--locations=<locations>...] [--clear_locations]
                            [--thumbnail_url=<thumbnail_url>] [--cover_url=<cover_url>]
-                           [--account_id=<account_id>] [--claim_address=<claim_address>] [--new_signing_key]
+                           [--account_id=<account_id>] [--wallet_id=<wallet_id>]
+                           [--claim_address=<claim_address>] [--new_signing_key]
                            [--funding_account_ids=<funding_account_ids>...]
                            [--preview] [--blocking] [--replace]
 
@@ -2109,6 +2241,7 @@ class Daemon(metaclass=JSONRPCServerType):
             --thumbnail_url=<thumbnail_url>: (str) thumbnail url
             --cover_url=<cover_url>        : (str) url of cover image
             --account_id=<account_id>      : (str) account to use for holding the transaction
+            --wallet_id=<wallet_id>        : (str) restrict operation to specific wallet
           --funding_account_ids=<funding_account_ids>: (list) ids of accounts to fund this transaction
             --claim_address=<claim_address>: (str) address where the channel is sent
             --new_signing_key              : (bool) generate a new signing key, will invalidate all previous publishes
@@ -2121,13 +2254,16 @@ class Daemon(metaclass=JSONRPCServerType):
 
         Returns: {Transaction}
         """
-        account = self.get_account_or_default(account_id)
-        funding_accounts = self.get_accounts_or_all(funding_account_ids)
+        wallet = self.wallet_manager.get_wallet_or_default(wallet_id)
+        account = wallet.get_account_or_default(account_id)
+        funding_accounts = wallet.get_accounts_or_all(funding_account_ids)
 
-        existing_channels = await account.get_claims(claim_id=claim_id)
+        existing_channels = await self.ledger.get_claims(
+            wallet=wallet, accounts=[account] if account_id else wallet.accounts, claim_id=claim_id
+        )
         if len(existing_channels) != 1:
             raise Exception(
-                f"Can't find the channel '{claim_id}' in account '{account_id}'."
+                f"Can't find the channel '{claim_id}' in account '{account.id}'."
             )
         old_txo = existing_channels[0]
         if not old_txo.claim.is_channel:
@@ -2166,7 +2302,7 @@ class Daemon(metaclass=JSONRPCServerType):
         if not preview:
             await tx.sign(funding_accounts)
             account.add_channel_private_key(new_txo.private_key)
-            self.default_wallet.save()
+            wallet.save()
             await self.broadcast_or_release(tx, blocking)
             await self.storage.save_claims([self._old_get_temp_claim_info(
                 tx, new_txo, claim_address, new_txo.claim, new_txo.claim_name, dewies_to_lbc(amount)
@@ -2179,7 +2315,7 @@ class Daemon(metaclass=JSONRPCServerType):
 
     @requires(WALLET_COMPONENT, conditions=[WALLET_IS_UNLOCKED])
     async def jsonrpc_channel_abandon(
-            self, claim_id=None, txid=None, nout=None, account_id=None,
+            self, claim_id=None, txid=None, nout=None, account_id=None, wallet_id=None,
             preview=False, blocking=True):
         """
         Abandon one of my channel claims.
@@ -2187,7 +2323,7 @@ class Daemon(metaclass=JSONRPCServerType):
         Usage:
             channel_abandon [<claim_id> | --claim_id=<claim_id>]
                             [<txid> | --txid=<txid>] [<nout> | --nout=<nout>]
-                            [--account_id=<account_id>]
+                            [--account_id=<account_id>] [--wallet_id=<wallet_id>]
                             [--preview] [--blocking]
 
         Options:
@@ -2195,12 +2331,14 @@ class Daemon(metaclass=JSONRPCServerType):
             --txid=<txid>             : (str) txid of the claim to abandon
             --nout=<nout>             : (int) nout of the claim to abandon
             --account_id=<account_id> : (str) id of the account to use
+            --wallet_id=<wallet_id>   : (str) restrict operation to specific wallet
             --preview                 : (bool) do not broadcast the transaction
             --blocking                : (bool) wait until abandon is in mempool
 
         Returns: {Transaction}
         """
-        account = self.get_account_or_default(account_id)
+        wallet = self.wallet_manager.get_wallet_or_default(wallet_id)
+        account = wallet.get_account_or_default(account_id)
 
         if txid is not None and nout is not None:
             claims = await account.get_claims(**{'txo.txid': txid, 'txo.position': nout})
@@ -2225,38 +2363,40 @@ class Daemon(metaclass=JSONRPCServerType):
         return tx
 
     @requires(WALLET_COMPONENT)
-    def jsonrpc_channel_list(self, account_id=None, page=None, page_size=None):
+    def jsonrpc_channel_list(self, account_id=None, wallet_id=None, page=None, page_size=None):
         """
         List my channel claims.
 
         Usage:
-            channel_list [<account_id> | --account_id=<account_id>]
+            channel_list [<account_id> | --account_id=<account_id>] [--wallet_id=<wallet_id>]
                          [--page=<page>] [--page_size=<page_size>]
 
         Options:
             --account_id=<account_id>  : (str) id of the account to use
+            --wallet_id=<wallet_id>    : (str) restrict results to specific wallet
             --page=<page>              : (int) page to return during paginating
             --page_size=<page_size>    : (int) number of items on page during pagination
 
         Returns: {Paginated[Output]}
         """
+        wallet = self.wallet_manager.get_wallet_or_default(wallet_id)
         if account_id:
-            account = self.get_account_or_error(account_id)
+            account: LBCAccount = wallet.get_account_or_error(account_id)
             channels = account.get_channels
             channel_count = account.get_channel_count
         else:
-            channels = self.ledger.get_channels
-            channel_count = self.ledger.get_channel_count
+            channels = partial(self.ledger.get_channels, wallet=wallet, accounts=wallet.accounts)
+            channel_count = partial(self.ledger.get_channel_count, wallet=wallet, accounts=wallet.accounts)
         return maybe_paginate(channels, channel_count, page, page_size)
 
     @requires(WALLET_COMPONENT)
-    async def jsonrpc_channel_export(self, channel_id=None, channel_name=None, account_id=None):
+    async def jsonrpc_channel_export(self, channel_id=None, channel_name=None, account_id=None, wallet_id=None):
         """
         Export channel private key.
 
         Usage:
             channel_export (<channel_id> | --channel_id=<channel_id> | --channel_name=<channel_name>)
-                           [--account_id=<account_id>...]
+                           [--account_id=<account_id>...] [--wallet_id=<wallet_id>]
 
         Options:
             --channel_id=<channel_id>     : (str) claim id of channel to export
@@ -2264,13 +2404,15 @@ class Daemon(metaclass=JSONRPCServerType):
             --account_id=<account_id>     : (str) one or more account ids for accounts
                                                   to look in for channels, defaults to
                                                   all accounts.
+            --wallet_id=<wallet_id>       : (str) restrict operation to specific wallet
 
         Returns:
             (str) serialized channel private key
         """
-        channel = await self.get_channel_or_error(account_id, channel_id, channel_name, for_signing=True)
+        wallet = self.wallet_manager.get_wallet_or_default(wallet_id)
+        channel = await self.get_channel_or_error(wallet, account_id, channel_id, channel_name, for_signing=True)
         address = channel.get_address(self.ledger)
-        public_key = await self.ledger.get_public_key_for_address(channel.get_address(self.ledger))
+        public_key = await self.ledger.get_public_key_for_address(wallet, address)
         if not public_key:
             raise Exception("Can't find public key for address holding the channel.")
         export = {
@@ -2283,15 +2425,16 @@ class Daemon(metaclass=JSONRPCServerType):
         return base58.b58encode(json.dumps(export, separators=(',', ':')))
 
     @requires(WALLET_COMPONENT)
-    async def jsonrpc_channel_import(self, channel_data):
+    async def jsonrpc_channel_import(self, channel_data, wallet_id=None):
         """
         Import serialized channel private key (to allow signing new streams to the channel)
 
         Usage:
-            channel_import (<channel_data> | --channel_data=<channel_data>)
+            channel_import (<channel_data> | --channel_data=<channel_data>) [--wallet_id=<wallet_id>]
 
         Options:
             --channel_data=<channel_data> : (str) serialized channel, as exported by channel export
+            --wallet_id=<wallet_id>       : (str) import into specific wallet
 
         Returns:
             (dict) Result dictionary
@@ -2311,7 +2454,8 @@ class Daemon(metaclass=JSONRPCServerType):
         if channels and channels[0].get_address(self.ledger) != holding_address:
             holding_address = channels[0].get_address(self.ledger)
 
-        account: LBCAccount = await self.ledger.get_account_for_address(holding_address)
+        wallet = self.wallet_manager.get_wallet_or_default(wallet_id)
+        account: LBCAccount = await self.ledger.get_account_for_address(wallet, holding_address)
         if account:
             # Case 1: channel holding address is in one of the accounts we already have
             #         simply add the certificate to existing account
@@ -2320,7 +2464,7 @@ class Daemon(metaclass=JSONRPCServerType):
             # Case 2: channel holding address hasn't changed and thus is in the bundled read-only account
             #         create a single-address holding account to manage the channel
             if holding_address == data['holding_address']:
-                account = LBCAccount.from_dict(self.ledger, self.default_wallet, {
+                account = LBCAccount.from_dict(self.ledger, wallet, {
                     'name': f"Holding Account For Channel {data['name']}",
                     'public_key': data['holding_public_key'],
                     'address_generator': {'name': 'single-address'}
@@ -2335,7 +2479,7 @@ class Daemon(metaclass=JSONRPCServerType):
                     "it is not an account to which you have access."
                 )
         account.add_channel_private_key(channel_private_key)
-        self.default_wallet.save()
+        wallet.save()
         return f"Added channel signing key for {data['name']}."
 
     STREAM_DOC = """
@@ -2357,8 +2501,8 @@ class Daemon(metaclass=JSONRPCServerType):
                     [--release_time=<release_time>] [--width=<width>] [--height=<height>] [--duration=<duration>]
                     [--channel_id=<channel_id> | --channel_name=<channel_name>]
                     [--channel_account_id=<channel_account_id>...]
-                    [--account_id=<account_id>] [--claim_address=<claim_address>]
-                    [--funding_account_ids=<funding_account_ids>...]
+                    [--account_id=<account_id>] [--wallet_id=<wallet_id>]
+                    [--claim_address=<claim_address>] [--funding_account_ids=<funding_account_ids>...]
                     [--preview] [--blocking]
 
         Options:
@@ -2427,6 +2571,7 @@ class Daemon(metaclass=JSONRPCServerType):
           --channel_account_id=<channel_account_id>: (str) one or more account ids for accounts to look in
                                                    for channel certificates, defaults to all accounts.
             --account_id=<account_id>      : (str) account to use for holding the transaction
+            --wallet_id=<wallet_id>        : (str) restrict operation to specific wallet
           --funding_account_ids=<funding_account_ids>: (list) ids of accounts to fund this transaction
             --claim_address=<claim_address>: (str) address where the claim is sent to, if not specified
                                                    it will be determined automatically from the account
@@ -2437,7 +2582,8 @@ class Daemon(metaclass=JSONRPCServerType):
         """
         log.info("publishing: name: %s params: %s", name, kwargs)
         self.valid_stream_name_or_error(name)
-        account = self.get_account_or_default(kwargs.get('account_id'))
+        wallet = self.wallet_manager.get_wallet_or_default(kwargs.get('wallet_id'))
+        account = wallet.get_account_or_default(kwargs.get('account_id'))
         claims = await account.get_claims(claim_name=name)
         if len(claims) == 0:
             if 'bid' not in kwargs:
@@ -2458,7 +2604,7 @@ class Daemon(metaclass=JSONRPCServerType):
     async def jsonrpc_stream_create(
             self, name, bid, file_path, allow_duplicate_name=False,
             channel_id=None, channel_name=None, channel_account_id=None,
-            account_id=None, claim_address=None, funding_account_ids=None,
+            account_id=None, wallet_id=None, claim_address=None, funding_account_ids=None,
             preview=False, blocking=False, **kwargs):
         """
         Make a new stream claim and announce the associated file to lbrynet.
@@ -2473,8 +2619,8 @@ class Daemon(metaclass=JSONRPCServerType):
                     [--release_time=<release_time>] [--width=<width>] [--height=<height>] [--duration=<duration>]
                     [--channel_id=<channel_id> | --channel_name=<channel_name>]
                     [--channel_account_id=<channel_account_id>...]
-                    [--account_id=<account_id>] [--claim_address=<claim_address>]
-                    [--funding_account_ids=<funding_account_ids>...]
+                    [--account_id=<account_id>] [--wallet_id=<wallet_id>]
+                    [--claim_address=<claim_address>] [--funding_account_ids=<funding_account_ids>...]
                     [--preview] [--blocking]
 
         Options:
@@ -2545,6 +2691,7 @@ class Daemon(metaclass=JSONRPCServerType):
           --channel_account_id=<channel_account_id>: (str) one or more account ids for accounts to look in
                                                    for channel certificates, defaults to all accounts.
             --account_id=<account_id>      : (str) account to use for holding the transaction
+            --wallet_id=<wallet_id>        : (str) restrict operation to specific wallet
           --funding_account_ids=<funding_account_ids>: (list) ids of accounts to fund this transaction
             --claim_address=<claim_address>: (str) address where the claim is sent to, if not specified
                                                    it will be determined automatically from the account
@@ -2553,10 +2700,11 @@ class Daemon(metaclass=JSONRPCServerType):
 
         Returns: {Transaction}
         """
+        wallet = self.wallet_manager.get_wallet_or_default(wallet_id)
         self.valid_stream_name_or_error(name)
-        account = self.get_account_or_default(account_id)
-        funding_accounts = self.get_accounts_or_all(funding_account_ids)
-        channel = await self.get_channel_or_none(channel_account_id, channel_id, channel_name, for_signing=True)
+        account = wallet.get_account_or_default(account_id)
+        funding_accounts = wallet.get_accounts_or_all(funding_account_ids)
+        channel = await self.get_channel_or_none(wallet, channel_account_id, channel_id, channel_name, for_signing=True)
         amount = self.get_dewies_or_error('bid', bid, positive_value=True)
         claim_address = await self.get_receiving_address(claim_address, account)
         kwargs['fee_address'] = self.get_fee_address(kwargs, claim_address)
@@ -2603,7 +2751,7 @@ class Daemon(metaclass=JSONRPCServerType):
     async def jsonrpc_stream_update(
             self, claim_id, bid=None, file_path=None,
             channel_id=None, channel_name=None, channel_account_id=None, clear_channel=False,
-            account_id=None, claim_address=None, funding_account_ids=None,
+            account_id=None, wallet_id=None, claim_address=None, funding_account_ids=None,
             preview=False, blocking=False, replace=False, **kwargs):
         """
         Update an existing stream claim and if a new file is provided announce it to lbrynet.
@@ -2621,8 +2769,8 @@ class Daemon(metaclass=JSONRPCServerType):
                     [--release_time=<release_time>] [--width=<width>] [--height=<height>] [--duration=<duration>]
                     [--channel_id=<channel_id> | --channel_name=<channel_name> | --clear_channel]
                     [--channel_account_id=<channel_account_id>...]
-                    [--account_id=<account_id>] [--claim_address=<claim_address>]
-                    [--funding_account_ids=<funding_account_ids>...]
+                    [--account_id=<account_id>] [--wallet_id=<wallet_id>]
+                    [--claim_address=<claim_address>] [--funding_account_ids=<funding_account_ids>...]
                     [--preview] [--blocking] [--replace]
 
         Options:
@@ -2699,6 +2847,7 @@ class Daemon(metaclass=JSONRPCServerType):
           --channel_account_id=<channel_account_id>: (str) one or more account ids for accounts to look in
                                                    for channel certificates, defaults to all accounts.
             --account_id=<account_id>      : (str) account to use for holding the transaction
+            --wallet_id=<wallet_id>        : (str) restrict operation to specific wallet
           --funding_account_ids=<funding_account_ids>: (list) ids of accounts to fund this transaction
             --claim_address=<claim_address>: (str) address where the claim is sent to, if not specified
                                                    it will be determined automatically from the account
@@ -2711,8 +2860,9 @@ class Daemon(metaclass=JSONRPCServerType):
 
         Returns: {Transaction}
         """
-        account = self.get_account_or_default(account_id)
-        funding_accounts = self.get_accounts_or_all(funding_account_ids)
+        wallet = self.wallet_manager.get_wallet_or_default(wallet_id)
+        account = wallet.get_account_or_default(account_id)
+        funding_accounts = wallet.get_accounts_or_all(funding_account_ids)
 
         existing_claims = await account.get_claims(claim_id=claim_id)
         if len(existing_claims) != 1:
@@ -2737,7 +2887,8 @@ class Daemon(metaclass=JSONRPCServerType):
 
         channel = None
         if channel_id or channel_name:
-            channel = await self.get_channel_or_error(channel_account_id, channel_id, channel_name, for_signing=True)
+            channel = await self.get_channel_or_error(
+                wallet, channel_account_id, channel_id, channel_name, for_signing=True)
         elif old_txo.claim.is_signed and not clear_channel and not replace:
             channel = old_txo.channel
 
@@ -2797,7 +2948,7 @@ class Daemon(metaclass=JSONRPCServerType):
 
     @requires(WALLET_COMPONENT, conditions=[WALLET_IS_UNLOCKED])
     async def jsonrpc_stream_abandon(
-            self, claim_id=None, txid=None, nout=None, account_id=None,
+            self, claim_id=None, txid=None, nout=None, account_id=None, wallet_id=None,
             preview=False, blocking=False):
         """
         Abandon one of my stream claims.
@@ -2805,7 +2956,7 @@ class Daemon(metaclass=JSONRPCServerType):
         Usage:
             stream_abandon [<claim_id> | --claim_id=<claim_id>]
                            [<txid> | --txid=<txid>] [<nout> | --nout=<nout>]
-                           [--account_id=<account_id>]
+                           [--account_id=<account_id>] [--wallet_id=<wallet_id>]
                            [--preview] [--blocking]
 
         Options:
@@ -2813,12 +2964,14 @@ class Daemon(metaclass=JSONRPCServerType):
             --txid=<txid>             : (str) txid of the claim to abandon
             --nout=<nout>             : (int) nout of the claim to abandon
             --account_id=<account_id> : (str) id of the account to use
+            --wallet_id=<wallet_id>   : (str) restrict operation to specific wallet
             --preview                 : (bool) do not broadcast the transaction
             --blocking                : (bool) wait until abandon is in mempool
 
         Returns: {Transaction}
         """
-        account = self.get_account_or_default(account_id)
+        wallet = self.wallet_manager.get_wallet_or_default(wallet_id)
+        account = wallet.get_account_or_default(account_id)
 
         if txid is not None and nout is not None:
             claims = await account.get_claims(**{'txo.txid': txid, 'txo.position': nout})
@@ -2843,28 +2996,30 @@ class Daemon(metaclass=JSONRPCServerType):
         return tx
 
     @requires(WALLET_COMPONENT)
-    def jsonrpc_stream_list(self, account_id=None, page=None, page_size=None):
+    def jsonrpc_stream_list(self, account_id=None, wallet_id=None, page=None, page_size=None):
         """
         List my stream claims.
 
         Usage:
-            stream_list [<account_id> | --account_id=<account_id>]
+            stream_list [<account_id> | --account_id=<account_id>] [--wallet_id=<wallet_id>]
                        [--page=<page>] [--page_size=<page_size>]
 
         Options:
-            --account_id=<account_id> : (str) id of the account to query
+            --account_id=<account_id>  : (str) id of the account to query
+            --wallet_id=<wallet_id>    : (str) restrict results to specific wallet
             --page=<page>              : (int) page to return during paginating
             --page_size=<page_size>    : (int) number of items on page during pagination
 
         Returns: {Paginated[Output]}
         """
+        wallet = self.wallet_manager.get_wallet_or_default(wallet_id)
         if account_id:
-            account = self.get_account_or_error(account_id)
+            account: LBCAccount = wallet.get_account_or_error(account_id)
             streams = account.get_streams
             stream_count = account.get_stream_count
         else:
-            streams = self.ledger.get_streams
-            stream_count = self.ledger.get_stream_count
+            streams = partial(self.ledger.get_streams, wallet=wallet, accounts=wallet.accounts)
+            stream_count = partial(self.ledger.get_stream_count, wallet=wallet, accounts=wallet.accounts)
         return maybe_paginate(streams, stream_count, page, page_size)
 
     @requires(WALLET_COMPONENT, EXCHANGE_RATE_MANAGER_COMPONENT, BLOB_COMPONENT,
@@ -2892,33 +3047,35 @@ class Daemon(metaclass=JSONRPCServerType):
 
     @requires(WALLET_COMPONENT, conditions=[WALLET_IS_UNLOCKED])
     async def jsonrpc_support_create(
-            self, claim_id, amount, tip=False, account_id=None, funding_account_ids=None,
+            self, claim_id, amount, tip=False, account_id=None, wallet_id=None, funding_account_ids=None,
             preview=False, blocking=False):
         """
         Create a support or a tip for name claim.
 
         Usage:
             support_create (<claim_id> | --claim_id=<claim_id>) (<amount> | --amount=<amount>)
-                           [--tip] [--account_id=<account_id>] [--preview] [--blocking]
-                           [--funding_account_ids=<funding_account_ids>...]
+                           [--tip] [--account_id=<account_id>] [--wallet_id=<wallet_id>]
+                           [--preview] [--blocking] [--funding_account_ids=<funding_account_ids>...]
 
         Options:
             --claim_id=<claim_id>     : (str) claim_id of the claim to support
             --amount=<amount>         : (decimal) amount of support
             --tip                     : (bool) send support to claim owner, default: false.
             --account_id=<account_id> : (str) account to use for holding the transaction
+            --wallet_id=<wallet_id>   : (str) restrict operation to specific wallet
           --funding_account_ids=<funding_account_ids>: (list) ids of accounts to fund this transaction
             --preview                 : (bool) do not broadcast the transaction
             --blocking                : (bool) wait until transaction is in mempool
 
         Returns: {Transaction}
         """
-        funding_accounts = self.get_accounts_or_all(funding_account_ids)
+        wallet = self.wallet_manager.get_wallet_or_default(wallet_id)
+        funding_accounts = wallet.get_accounts_or_all(funding_account_ids)
         amount = self.get_dewies_or_error("amount", amount)
         claim = await self.ledger.get_claim_by_claim_id(claim_id)
         claim_address = claim.get_address(self.ledger)
         if not tip:
-            account = self.get_account_or_default(account_id)
+            account = wallet.get_account_or_default(account_id)
             claim_address = await account.receiving.get_or_create_usable_address()
 
         tx = await Transaction.support(
@@ -2942,41 +3099,44 @@ class Daemon(metaclass=JSONRPCServerType):
         return tx
 
     @requires(WALLET_COMPONENT)
-    def jsonrpc_support_list(self, account_id=None, page=None, page_size=None):
+    def jsonrpc_support_list(self, account_id=None, wallet_id=None, page=None, page_size=None):
         """
         List supports and tips in my control.
 
         Usage:
-            support_list [<account_id> | --account_id=<account_id>]
+            support_list [<account_id> | --account_id=<account_id>] [--wallet_id=<wallet_id>]
                          [--page=<page>] [--page_size=<page_size>]
 
         Options:
-            --account_id=<account_id> : (str) id of the account to query
+            --account_id=<account_id>  : (str) id of the account to query
+            --wallet_id=<wallet_id>    : (str) restrict results to specific wallet
             --page=<page>              : (int) page to return during paginating
             --page_size=<page_size>    : (int) number of items on page during pagination
 
         Returns: {Paginated[Output]}
         """
+        wallet = self.wallet_manager.get_wallet_or_default(wallet_id)
         if account_id:
-            account = self.get_account_or_error(account_id)
+            account: LBCAccount = wallet.get_account_or_error(account_id)
             supports = account.get_supports
             support_count = account.get_support_count
         else:
-            supports = self.ledger.get_supports
-            support_count = self.ledger.get_support_count
+            supports = partial(self.ledger.get_supports, wallet=wallet, accounts=wallet.accounts)
+            support_count = partial(self.ledger.get_support_count, wallet=wallet, accounts=wallet.accounts)
         return maybe_paginate(supports, support_count, page, page_size)
 
     @requires(WALLET_COMPONENT, conditions=[WALLET_IS_UNLOCKED])
     async def jsonrpc_support_abandon(
             self, claim_id=None, txid=None, nout=None, keep=None,
-            account_id=None, preview=False, blocking=False):
+            account_id=None, wallet_id=None, preview=False, blocking=False):
         """
         Abandon supports, including tips, of a specific claim, optionally
         keeping some amount as supports.
 
         Usage:
             support_abandon [--claim_id=<claim_id>] [(--txid=<txid> --nout=<nout>)] [--keep=<keep>]
-                            [--account_id=<account_id>] [--preview] [--blocking]
+                            [--account_id=<account_id>] [--wallet_id=<wallet_id>]
+                            [--preview] [--blocking]
 
         Options:
             --claim_id=<claim_id>     : (str) claim_id of the support to abandon
@@ -2984,6 +3144,7 @@ class Daemon(metaclass=JSONRPCServerType):
             --nout=<nout>             : (int) nout of the claim to abandon
             --keep=<keep>             : (decimal) amount of lbc to keep as support
             --account_id=<account_id> : (str) id of the account to use
+            --wallet_id=<wallet_id>   : (str) restrict operation to specific wallet
             --preview                 : (bool) do not broadcast the transaction
             --blocking                : (bool) wait until abandon is in mempool
 
@@ -3037,16 +3198,17 @@ class Daemon(metaclass=JSONRPCServerType):
     """
 
     @requires(WALLET_COMPONENT)
-    def jsonrpc_transaction_list(self, account_id=None, page=None, page_size=None):
+    def jsonrpc_transaction_list(self, account_id=None, wallet_id=None, page=None, page_size=None):
         """
         List transactions belonging to wallet
 
         Usage:
-            transaction_list [<account_id> | --account_id=<account_id>]
+            transaction_list [<account_id> | --account_id=<account_id>] [--wallet_id=<wallet_id>]
                              [--page=<page>] [--page_size=<page_size>]
 
         Options:
-            --account_id=<account_id> : (str) id of the account to query
+            --account_id=<account_id>  : (str) id of the account to query
+            --wallet_id=<wallet_id>    : (str) restrict results to specific wallet
             --page=<page>              : (int) page to return during paginating
             --page_size=<page_size>    : (int) number of items on page during pagination
 
@@ -3096,13 +3258,16 @@ class Daemon(metaclass=JSONRPCServerType):
             }
 
         """
+        wallet = self.wallet_manager.get_wallet_or_default(wallet_id)
         if account_id:
-            account = self.get_account_or_error(account_id)
+            account: LBCAccount = wallet.get_account_or_error(account_id)
             transactions = account.get_transaction_history
             transaction_count = account.get_transaction_history_count
         else:
-            transactions = self.ledger.get_transaction_history
-            transaction_count = self.ledger.get_transaction_history_count
+            transactions = partial(
+                self.ledger.get_transaction_history, wallet=wallet, accounts=wallet.accounts)
+            transaction_count = partial(
+                self.ledger.get_transaction_history_count, wallet=wallet, accounts=wallet.accounts)
         return maybe_paginate(transactions, transaction_count, page, page_size)
 
     @requires(WALLET_COMPONENT)
@@ -3125,32 +3290,34 @@ class Daemon(metaclass=JSONRPCServerType):
     """
 
     @requires(WALLET_COMPONENT)
-    def jsonrpc_utxo_list(self, account_id=None, page=None, page_size=None):
+    def jsonrpc_utxo_list(self, account_id=None, wallet_id=None, page=None, page_size=None):
         """
         List unspent transaction outputs
 
         Usage:
-            utxo_list [<account_id> | --account_id=<account_id>]
+            utxo_list [<account_id> | --account_id=<account_id>] [--wallet_id=<wallet_id>]
                       [--page=<page>] [--page_size=<page_size>]
 
         Options:
-            --account_id=<account_id> : (str) id of the account to query
+            --account_id=<account_id>  : (str) id of the account to query
+            --wallet_id=<wallet_id>    : (str) restrict results to specific wallet
             --page=<page>              : (int) page to return during paginating
             --page_size=<page_size>    : (int) number of items on page during pagination
 
         Returns: {Paginated[Output]}
         """
+        wallet = self.wallet_manager.get_wallet_or_default(wallet_id)
         if account_id:
-            account = self.get_account_or_error(account_id)
+            account = wallet.get_account_or_error(account_id)
             utxos = account.get_utxos
             utxo_count = account.get_utxo_count
         else:
-            utxos = self.ledger.get_utxos
-            utxo_count = self.ledger.get_utxo_count
+            utxos = partial(self.ledger.get_utxos, wallet=wallet, accounts=wallet.accounts)
+            utxo_count = partial(self.ledger.get_utxo_count, wallet=wallet, accounts=wallet.accounts)
         return maybe_paginate(utxos, utxo_count, page, page_size)
 
     @requires(WALLET_COMPONENT)
-    def jsonrpc_utxo_release(self, account_id=None):
+    def jsonrpc_utxo_release(self, account_id=None, wallet_id=None):
         """
         When spending a UTXO it is locally locked to prevent double spends;
         occasionally this can result in a UTXO being locked which ultimately
@@ -3159,15 +3326,17 @@ class Daemon(metaclass=JSONRPCServerType):
         on all UTXOs in your account.
 
         Usage:
-            utxo_release [<account_id> | --account_id=<account_id>]
+            utxo_release [<account_id> | --account_id=<account_id>] [--wallet_id=<wallet_id>]
 
         Options:
             --account_id=<account_id> : (str) id of the account to query
+            --wallet_id=<wallet_id>   : (str) restrict operation to specific wallet
 
         Returns:
             None
         """
-        return self.get_account_or_default(account_id).release_all_outputs()
+        wallet = self.wallet_manager.get_wallet_or_default(wallet_id)
+        return wallet.get_account_or_default(account_id).release_all_outputs()
 
     BLOB_DOC = """
     Blob management.
@@ -3591,7 +3760,7 @@ class Daemon(metaclass=JSONRPCServerType):
 
     @requires(WALLET_COMPONENT)
     async def jsonrpc_comment_create(self, claim_id, comment, parent_id=None, channel_account_id=None,
-                                     channel_name=None, channel_id=None):
+                                     channel_name=None, channel_id=None, wallet_id=None):
         """
         Create and associate a comment with a claim using your channel identity.
 
@@ -3600,7 +3769,7 @@ class Daemon(metaclass=JSONRPCServerType):
                             (<claim_id> | --claim_id=<claim_id>)
                             [--parent_id=<parent_id>]
                             [--channel_id=<channel_id>] [--channel_name=<channel_name>]
-                            [--channel_account_id=<channel_account_id>...]
+                            [--channel_account_id=<channel_account_id>...] [--wallet_id=<wallet_id>]
 
         Options:
             --comment=<comment>                         : (str) Comment to be made, should be at most 2000 characters.
@@ -3610,6 +3779,7 @@ class Daemon(metaclass=JSONRPCServerType):
             --channel_name=<channel_name>               : (str) The channel you want to post as, prepend with a '@'
             --channel_account_id=<channel_account_id>   : (str) one or more account ids for accounts to look in
                                                           for channel certificates, defaults to all accounts.
+            --wallet_id=<wallet_id>                     : (str) restrict operation to specific wallet
 
         Returns:
             (dict) Comment object if successfully made, (None) otherwise
@@ -3624,12 +3794,15 @@ class Daemon(metaclass=JSONRPCServerType):
                 "timestamp":    (int) The time at which comment was entered into the server at, in nanoseconds.
             }
         """
+        wallet = self.wallet_manager.get_wallet_or_default(wallet_id)
         comment_body = {
             'comment': comment.strip(),
             'claim_id': claim_id,
             'parent_id': parent_id,
         }
-        channel = await self.get_channel_or_none(channel_account_id, channel_id, channel_name, for_signing=True)
+        channel = await self.get_channel_or_none(
+            wallet, channel_account_id, channel_id, channel_name, for_signing=True
+        )
         if channel:
             comment_body.update({
                 'channel_id': channel.claim_id,
@@ -3642,15 +3815,16 @@ class Daemon(metaclass=JSONRPCServerType):
         return response
 
     @requires(WALLET_COMPONENT)
-    async def jsonrpc_comment_abandon(self, comment_id):
+    async def jsonrpc_comment_abandon(self, comment_id, wallet_id=None):
         """
         Abandon a comment published under your channel identity.
 
         Usage:
-            comment_abandon  (<comment_id> | --comment_id=<comment_id>)
+            comment_abandon  (<comment_id> | --comment_id=<comment_id>) [--wallet_id=<wallet_id>]
 
         Options:
             --comment_id=<comment_id>   : (str) The ID of the comment to be abandoned.
+            --wallet_id=<wallet_id      : (str) restrict operation to specific wallet
 
         Returns:
             (dict) Object with the `comment_id` passed in as the key, and a flag indicating if it was abandoned
@@ -3660,13 +3834,14 @@ class Daemon(metaclass=JSONRPCServerType):
                 }
             }
         """
+        wallet = self.wallet_manager.get_wallet_or_default(wallet_id)
         abandon_comment_body = {'comment_id': comment_id}
         channel = await comment_client.jsonrpc_post(
             self.conf.comment_server, 'get_channel_from_comment_id', comment_id=comment_id
         )
         if 'error' in channel:
             return {comment_id: {'abandoned': False}}
-        channel = await self.get_channel_or_none(None, **channel)
+        channel = await self.get_channel_or_none(wallet, None, **channel)
         abandon_comment_body.update({
             'channel_id': channel.claim_id,
             'channel_name': channel.claim_name,
@@ -3675,15 +3850,16 @@ class Daemon(metaclass=JSONRPCServerType):
         return await comment_client.jsonrpc_post(self.conf.comment_server, 'abandon_comment', abandon_comment_body)
 
     @requires(WALLET_COMPONENT)
-    async def jsonrpc_comment_hide(self, comment_ids: typing.Union[str, list]):
+    async def jsonrpc_comment_hide(self, comment_ids: typing.Union[str, list], wallet_id=None):
         """
         Hide a comment published to a claim you control.
 
         Usage:
-            comment_hide  <comment_ids>...
+            comment_hide  <comment_ids>... [--wallet_id=<wallet_id>]
 
         Options:
-            --comment_ids=<comment_ids>   : (str, list) one or more comment_id to hide.
+            --comment_ids=<comment_ids>  : (str, list) one or more comment_id to hide.
+            --wallet_id=<wallet_id>      : (str) restrict operation to specific wallet
 
         Returns:
             (dict) keyed by comment_id, containing success info
@@ -3691,6 +3867,8 @@ class Daemon(metaclass=JSONRPCServerType):
                 "hidden": (bool)  flag indicating if comment_id was hidden
             }
         """
+        wallet = self.wallet_manager.get_wallet_or_default(wallet_id)
+
         if isinstance(comment_ids, str):
             comment_ids = [comment_ids]
 
@@ -3704,6 +3882,7 @@ class Daemon(metaclass=JSONRPCServerType):
             claim = claims.get(comment['claim_id'])
             if claim:
                 channel = await self.get_channel_or_none(
+                    wallet,
                     account_ids=[],
                     channel_id=claim.channel.claim_id,
                     channel_name=claim.channel.claim_name,
@@ -3766,19 +3945,23 @@ class Daemon(metaclass=JSONRPCServerType):
         if 'fee_currency' in kwargs or 'fee_amount' in kwargs:
             return claim_address
 
-    async def get_receiving_address(self, address: str, account: LBCAccount) -> str:
-        if address is None:
+    async def get_receiving_address(self, address: str, account: Optional[LBCAccount]) -> str:
+        if address is None and account is not None:
             return await account.receiving.get_or_create_usable_address()
         self.valid_address_or_error(address)
         return address
 
-    async def get_channel_or_none(self, account_ids: List[str], channel_id: str = None, channel_name: str = None,
-                                  for_signing: bool = False) -> Output:
+    async def get_channel_or_none(
+            self, wallet: Wallet, account_ids: List[str], channel_id: str = None,
+            channel_name: str = None, for_signing: bool = False) -> Output:
         if channel_id is not None or channel_name is not None:
-            return await self.get_channel_or_error(account_ids, channel_id, channel_name, for_signing)
+            return await self.get_channel_or_error(
+                wallet, account_ids, channel_id, channel_name, for_signing
+            )
 
-    async def get_channel_or_error(self, account_ids: List[str], channel_id: str = None, channel_name: str = None,
-                                   for_signing: bool = False) -> Output:
+    async def get_channel_or_error(
+            self, wallet: Wallet, account_ids: List[str], channel_id: str = None,
+            channel_name: str = None, for_signing: bool = False) -> Output:
         if channel_id:
             key, value = 'id', channel_id
         elif channel_name:
@@ -3786,7 +3969,7 @@ class Daemon(metaclass=JSONRPCServerType):
         else:
             raise ValueError("Couldn't find channel because a channel_id or channel_name was not provided.")
         channels = await self.ledger.get_channels(
-            accounts=self.get_accounts_or_all(account_ids),
+            wallet=wallet, accounts=wallet.get_accounts_or_all(account_ids),
             **{f'claim_{key}': value}
         )
         if len(channels) == 1:
@@ -3799,30 +3982,6 @@ class Daemon(metaclass=JSONRPCServerType):
                 f"pass a channel_id to narrow it down."
             )
         raise ValueError(f"Couldn't find channel with channel_{key} '{value}'.")
-
-    def get_account_or_default(self, account_id: str, argument_name: str = "account", lbc_only=True) -> LBCAccount:
-        if account_id is None:
-            return self.default_account
-        return self.get_account_or_error(account_id, argument_name, lbc_only)
-
-    def get_accounts_or_all(self, account_ids: List[str]) -> List[LBCAccount]:
-        return [
-            self.get_account_or_error(account_id)
-            for account_id in account_ids
-        ] if account_ids else self.default_wallet.accounts
-
-    def get_account_or_error(
-            self, account_id: str, argument_name: str = "account", lbc_only=True) -> Optional[LBCAccount]:
-        for account in self.default_wallet.accounts:
-            if account.id == account_id:
-                if lbc_only and not isinstance(account, LBCAccount):
-                    raise ValueError(
-                        "Found '{}', but it's an {} ledger account. "
-                        "'{}' requires specifying an LBC ledger account."
-                        .format(account_id, account.ledger.symbol, argument_name)
-                    )
-                return account
-        raise ValueError(f"Couldn't find account: {account_id}.")
 
     @staticmethod
     def get_dewies_or_error(argument: str, lbc: str, positive_value=False):

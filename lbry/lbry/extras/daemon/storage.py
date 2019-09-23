@@ -252,7 +252,7 @@ class SQLiteStorage(SQLiteMixin):
                 status text not null,
                 saved_file integer not null,
                 content_fee text,
-                added_at integer
+                added_at integer not null
             );
 
             create table if not exists content_claim (

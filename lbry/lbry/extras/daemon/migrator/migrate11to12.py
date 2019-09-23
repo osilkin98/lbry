@@ -21,8 +21,8 @@ def do_migration(conf):
     cursor.execute("pragma foreign_keys=off")
 
     # we don't have any indexes, views or triggers, so step 3 is skipped.
+    cursor.execute("DROP TABLE IF EXISTS NEW_TABLE")
     cursor.execute("""
-        DROP TABLE IF EXISTS NEW_FILE;
         CREATE TABLE IF NOT EXISTS NEW_FILE (
             stream_hash         TEXT PRIMARY KEY NOT NULL REFERENCES stream,
             file_name           TEXT,

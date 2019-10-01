@@ -6,6 +6,8 @@ from json import JSONEncoder
 
 from google.protobuf.message import DecodeError
 
+from torba.client.wallet import Wallet
+from torba.client.bip32 import PubKey
 from lbry.schema.claim import Claim
 from lbry.wallet.ledger import MainNetLedger, Account
 from lbry.wallet.transaction import Transaction, Output
@@ -67,6 +69,13 @@ def encode_account_doc():
     }
 
 
+def encode_wallet_doc():
+    return {
+        'id': 'wallet_id',
+        'name': 'optional wallet name',
+    }
+
+
 def encode_file_doc():
     return {
         'streaming_url': '(str) url to stream the file using range requests',
@@ -110,6 +119,8 @@ class JSONResponseEncoder(JSONEncoder):
     def default(self, obj):  # pylint: disable=method-hidden
         if isinstance(obj, Account):
             return self.encode_account(obj)
+        if isinstance(obj, Wallet):
+            return self.encode_wallet(obj)
         if isinstance(obj, ManagedStream):
             return self.encode_file(obj)
         if isinstance(obj, Transaction):
@@ -118,6 +129,8 @@ class JSONResponseEncoder(JSONEncoder):
             return self.encode_output(obj)
         if isinstance(obj, Claim):
             return self.encode_claim(obj)
+        if isinstance(obj, PubKey):
+            return obj.extended_key_string()
         if isinstance(obj, datetime):
             return obj.strftime("%Y%m%dT%H:%M:%S")
         if isinstance(obj, Decimal):
@@ -218,6 +231,12 @@ class JSONResponseEncoder(JSONEncoder):
         result.pop('certificates', None)
         result['is_default'] = self.ledger.accounts[0] == account
         return result
+
+    def encode_wallet(self, wallet):
+        return {
+            'id': wallet.id,
+            'name': wallet.name
+        }
 
     def encode_file(self, managed_stream):
         output_exists = managed_stream.output_file_exists

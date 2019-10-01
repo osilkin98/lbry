@@ -1,6 +1,7 @@
 import asyncio
 import logging
 from binascii import unhexlify
+from functools import partial
 from typing import Tuple, List
 from datetime import datetime
 
@@ -60,7 +61,8 @@ class MainNetLedger(BaseLedger):
         return outputs.inflate(txs), outputs.offset, outputs.total
 
     async def resolve(self, urls):
-        txos = (await self._inflate_outputs(self.network.resolve(urls)))[0]
+        resolve = partial(self.network.retriable_call, self.network.resolve)
+        txos = (await self._inflate_outputs(resolve(urls)))[0]
         assert len(urls) == len(txos), "Mismatch between urls requested for resolve and responses received."
         result = {}
         for url, txo in zip(urls, txos):
@@ -121,39 +123,30 @@ class MainNetLedger(BaseLedger):
         return super().get_utxo_count(**constraints)
 
     def get_claims(self, **constraints):
-        self.constraint_account_or_all(constraints)
         return self.db.get_claims(**constraints)
 
     def get_claim_count(self, **constraints):
-        self.constraint_account_or_all(constraints)
         return self.db.get_claim_count(**constraints)
 
     def get_streams(self, **constraints):
-        self.constraint_account_or_all(constraints)
         return self.db.get_streams(**constraints)
 
     def get_stream_count(self, **constraints):
-        self.constraint_account_or_all(constraints)
         return self.db.get_stream_count(**constraints)
 
     def get_channels(self, **constraints):
-        self.constraint_account_or_all(constraints)
         return self.db.get_channels(**constraints)
 
     def get_channel_count(self, **constraints):
-        self.constraint_account_or_all(constraints)
         return self.db.get_channel_count(**constraints)
 
     def get_supports(self, **constraints):
-        self.constraint_account_or_all(constraints)
         return self.db.get_supports(**constraints)
 
     def get_support_count(self, **constraints):
-        self.constraint_account_or_all(constraints)
         return self.db.get_support_count(**constraints)
 
     async def get_transaction_history(self, **constraints):
-        self.constraint_account_or_all(constraints)
         txs = await self.db.get_transactions(**constraints)
         headers = self.headers
         history = []
@@ -249,7 +242,6 @@ class MainNetLedger(BaseLedger):
         return history
 
     def get_transaction_history_count(self, **constraints):
-        self.constraint_account_or_all(constraints)
         return self.db.get_transaction_count(**constraints)
 
 

@@ -1,5 +1,6 @@
 import sqlite3
 import os
+import time
 
 
 def do_migration(conf):
@@ -31,18 +32,20 @@ def do_migration(conf):
             status              text    not null,
             saved_file          integer not null,
             content_fee         text,
-            added_at            integer not null 
+            added_at            integer not null
         );
-        
+
 
     """)
 
     # step 5: transfer content from old to new
-    cursor.execute("""
-        insert into new_file 
-        select file.*, strftime('%s', 'now') 
-        from file
-    """)
+    select = "select * from file"
+    for (stream_hash, file_name, download_dir, data_rate, blob_rate, status, saved_file, fee) in cursor.execute(select).fetchall():
+        added_at = int(time.time())
+        cursor.execute(
+            "insert into new_file values (?, ?, ?, ?, ?, ?, ?, ?)",
+            (stream_hash, file_name, download_dir, data_rate, blob_rate, status, saved_file, fee, added_at)
+        )
 
     # step 6: drop old table
     cursor.execute("drop table file")

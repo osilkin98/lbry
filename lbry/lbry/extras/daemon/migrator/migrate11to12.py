@@ -40,7 +40,8 @@ def do_migration(conf):
 
     # step 5: transfer content from old to new
     select = "select * from file"
-    for (stream_hash, file_name, download_dir, data_rate, blob_rate, status, saved_file, fee) in cursor.execute(select).fetchall():
+    for (stream_hash, file_name, download_dir, data_rate, blob_rate, status, saved_file, fee) \
+            in cursor.execute(select).fetchall():
         added_at = int(time.time())
         cursor.execute(
             "insert into new_file values (?, ?, ?, ?, ?, ?, ?, ?)",

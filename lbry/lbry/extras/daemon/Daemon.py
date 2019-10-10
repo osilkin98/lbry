@@ -23,6 +23,7 @@ from lbry import utils
 from lbry.conf import Config, Setting
 from lbry.blob.blob_file import is_valid_blobhash, BlobBuffer
 from lbry.blob_exchange.downloader import download_blob
+from lbry.dht.peer import make_kademlia_peer
 from lbry.error import DownloadSDTimeout, ComponentsNotStarted
 from lbry.error import NullFundsError, NegativeFundsError, ComponentStartConditionNotMet
 from lbry.extras import system_info
@@ -40,7 +41,6 @@ from lbry.wallet.account import Account as LBCAccount
 from lbry.wallet.dewies import dewies_to_lbc, lbc_to_dewies
 from lbry.schema.claim import Claim
 from lbry.schema.url import URL
-
 
 if typing.TYPE_CHECKING:
     from lbry.blob.blob_manager import BlobManager
@@ -72,7 +72,9 @@ def requires(*components, **conditions):
                 raise ComponentsNotStarted("the following required components have not yet started: "
                                            "%s" % json.dumps(components))
             return fn(*args, **kwargs)
+
         return _inner
+
     return _wrap
 
 
@@ -81,6 +83,7 @@ def deprecated(new_command=None):
         f.new_command = new_command
         f._deprecated = True
         return f
+
     return _deprecated_wrapper
 
 
@@ -124,13 +127,13 @@ async def maybe_paginate(get_records: Callable, get_record_count: Callable,
                          page: Optional[int], page_size: Optional[int], **constraints):
     if None not in (page, page_size):
         constraints.update({
-            "offset": page_size * (page-1),
+            "offset": page_size * (page - 1),
             "limit": page_size
         })
         total_items = await get_record_count(**constraints)
         return {
             "items": await get_records(**constraints),
-            "total_pages": int((total_items + (page_size-1)) / page_size),
+            "total_pages": int((total_items + (page_size - 1)) / page_size),
             "total_items": total_items,
             "page": page, "page_size": page_size
         }
@@ -208,7 +211,7 @@ class JSONRPCError:
             for i, t in enumerate(trace_lines):
                 if "--- <exception caught here> ---" in t:
                     if len(trace_lines) > i + 1:
-                        self.traceback = [j for j in trace_lines[i+1:] if j]
+                        self.traceback = [j for j in trace_lines[i + 1:] if j]
                         break
 
     def to_dict(self):
@@ -338,7 +341,7 @@ class Daemon(metaclass=JSONRPCServerType):
                     name, = name_parts
                 elif len(name_parts) == 2:
                     group, name = name_parts
-                    assert group in api['groups'],\
+                    assert group in api['groups'], \
                         f"Group {group} does not have doc string for command {full_name}."
                 else:
                     raise NameError(f'Could not parse method name: {jsonrpc_method}')
@@ -589,7 +592,9 @@ class Daemon(metaclass=JSONRPCServerType):
         except Exception as e:  # pylint: disable=broad-except
             log.exception("error handling api request")
             return JSONRPCError(
-                str(e), JSONRPCError.CODE_APPLICATION_ERROR, format_exc()
+                f"Error calling {function_name} with args {args}\n" + str(e),
+                JSONRPCError.CODE_APPLICATION_ERROR,
+                format_exc()
             )
 
     def _verify_method_is_callable(self, function_path):
@@ -621,7 +626,7 @@ class Daemon(metaclass=JSONRPCServerType):
 
         missing_required_params = [
             required_param
-            for required_param in argspec.args[len(args_tup)+1:-num_optional_params]
+            for required_param in argspec.args[len(args_tup) + 1:-num_optional_params]
             if required_param not in args_dict
         ]
         if len(missing_required_params):
@@ -912,7 +917,7 @@ class Daemon(metaclass=JSONRPCServerType):
 
         for resolved_uri in resolved:
             results[resolved_uri] = resolved[resolved_uri] if resolved[resolved_uri] is not None else \
-                                    {"error": f"{resolved_uri} did not resolve to a claim"}
+                {"error": f"{resolved_uri} did not resolve to a claim"}
 
         return results
 
@@ -1514,7 +1519,12 @@ class Daemon(metaclass=JSONRPCServerType):
         Returns: {Transaction}
         """
         wallet = self.wallet_manager.get_wallet_or_default(wallet_id)
-        account = wallet.get_account_or_default(account_id)
+        if account_id:
+            account = wallet.get_account_or_error(account_id)
+            accounts = [account]
+        else:
+            account = wallet.default_account
+            accounts = wallet.accounts
 
         amount = self.get_dewies_or_error("amount", amount)
         if not amount:
@@ -1535,14 +1545,14 @@ class Daemon(metaclass=JSONRPCServerType):
             )
 
         tx = await Transaction.create(
-            [], outputs, [account], account
+            [], outputs, accounts, account
         )
 
         if not preview:
             await self.ledger.broadcast(tx)
             await self.analytics_manager.send_credits_sent()
         else:
-            await account.ledger.release_tx(tx)
+            await self.ledger.release_tx(tx)
 
         return tx
 
@@ -1727,7 +1737,7 @@ class Daemon(metaclass=JSONRPCServerType):
             --blobs_in_stream<blobs_in_stream>     : (int) get file with matching blobs in stream
             --blobs_remaining=<blobs_remaining>    : (int) amount of remaining blobs to download
             --sort=<sort_by>                       : (str) field to sort by (one of the above filter fields)
-            --comparison=<comparison>              : (str) logical comparision, (eq | ne | g | ge | l | le)
+            --comparison=<comparison>              : (str) logical comparison, (eq | ne | g | ge | l | le)
             --page=<page>                          : (int) page to return during paginating
             --page_size=<page_size>                : (int) number of items on page during pagination
 
@@ -1999,7 +2009,7 @@ class Daemon(metaclass=JSONRPCServerType):
                                                     a release time the publish time is used instead
                                                     (supports equality constraints)
             --amount=<amount>               : (int) limit by claim value (supports equality constraints)
-            --support_amount=<support_amount>: (int) limit by supports and tips recieved (supports
+            --support_amount=<support_amount>: (int) limit by supports and tips received (supports
                                                     equality constraints)
             --effective_amount=<effective_amount>: (int) limit by total value (initial claim value plus
                                                      all tips and supports received), this amount is
@@ -2056,11 +2066,11 @@ class Daemon(metaclass=JSONRPCServerType):
         if kwargs.pop('invalid_channel_signature', False):
             kwargs['signature_valid'] = 0
         page_num, page_size = abs(kwargs.pop('page', 1)), min(abs(kwargs.pop('page_size', 10)), 50)
-        kwargs.update({'offset': page_size * (page_num-1), 'limit': page_size})
+        kwargs.update({'offset': page_size * (page_num - 1), 'limit': page_size})
         txos, offset, total = await self.ledger.claim_search(**kwargs)
         result = {"items": txos, "page": page_num, "page_size": page_size}
         if not kwargs.pop('no_totals', False):
-            result['total_pages'] = int((total + (page_size-1)) / page_size)
+            result['total_pages'] = int((total + (page_size - 1)) / page_size)
             result['total_items'] = total
         return result
 
@@ -2263,7 +2273,7 @@ class Daemon(metaclass=JSONRPCServerType):
             --clear_locations              : (bool) clear existing locations (prior to adding new ones)
             --thumbnail_url=<thumbnail_url>: (str) thumbnail url
             --cover_url=<cover_url>        : (str) url of cover image
-            --account_id=<account_id>      : (str) account to use for holding the transaction
+            --account_id=<account_id>      : (str) account in which to look for channel (default: all)
             --wallet_id=<wallet_id>        : (str) restrict operation to specific wallet
           --funding_account_ids=<funding_account_ids>: (list) ids of accounts to fund this transaction
             --claim_address=<claim_address>: (str) address where the channel is sent
@@ -2278,15 +2288,21 @@ class Daemon(metaclass=JSONRPCServerType):
         Returns: {Transaction}
         """
         wallet = self.wallet_manager.get_wallet_or_default(wallet_id)
-        account = wallet.get_account_or_default(account_id)
         funding_accounts = wallet.get_accounts_or_all(funding_account_ids)
+        if account_id:
+            account = wallet.get_account_or_error(account_id)
+            accounts = [account]
+        else:
+            account = wallet.default_account
+            accounts = wallet.accounts
 
         existing_channels = await self.ledger.get_claims(
-            wallet=wallet, accounts=[account] if account_id else wallet.accounts, claim_id=claim_id
+            wallet=wallet, accounts=accounts, claim_id=claim_id
         )
         if len(existing_channels) != 1:
+            account_ids = ', '.join(f"'{account.id}'" for account in accounts)
             raise Exception(
-                f"Can't find the channel '{claim_id}' in account '{account.id}'."
+                f"Can't find the channel '{claim_id}' in account(s) {account_ids}."
             )
         old_txo = existing_channels[0]
         if not old_txo.claim.is_channel:
@@ -2361,12 +2377,21 @@ class Daemon(metaclass=JSONRPCServerType):
         Returns: {Transaction}
         """
         wallet = self.wallet_manager.get_wallet_or_default(wallet_id)
-        account = wallet.get_account_or_default(account_id)
+        if account_id:
+            account = wallet.get_account_or_error(account_id)
+            accounts = [account]
+        else:
+            account = wallet.default_account
+            accounts = wallet.accounts
 
         if txid is not None and nout is not None:
-            claims = await account.get_claims(**{'txo.txid': txid, 'txo.position': nout})
+            claims = await self.ledger.get_claims(
+                wallet=wallet, accounts=accounts, **{'txo.txid': txid, 'txo.position': nout}
+            )
         elif claim_id is not None:
-            claims = await account.get_claims(claim_id=claim_id)
+            claims = await self.ledger.get_claims(
+                wallet=wallet, accounts=accounts, claim_id=claim_id
+            )
         else:
             raise Exception('Must specify claim_id, or txid and nout')
 
@@ -2741,7 +2766,7 @@ class Daemon(metaclass=JSONRPCServerType):
                 )
 
         claim = Claim()
-        claim.stream.update(file_path=file_path, sd_hash='0'*96, **kwargs)
+        claim.stream.update(file_path=file_path, sd_hash='0' * 96, **kwargs)
         tx = await Transaction.claim_create(
             name, claim, amount, claim_address, funding_accounts, funding_accounts[0], channel
         )
@@ -2869,7 +2894,7 @@ class Daemon(metaclass=JSONRPCServerType):
             --clear_channel                : (bool) remove channel signature
           --channel_account_id=<channel_account_id>: (str) one or more account ids for accounts to look in
                                                    for channel certificates, defaults to all accounts.
-            --account_id=<account_id>      : (str) account to use for holding the transaction
+            --account_id=<account_id>      : (str) account in which to look for stream (default: all)
             --wallet_id=<wallet_id>        : (str) restrict operation to specific wallet
           --funding_account_ids=<funding_account_ids>: (list) ids of accounts to fund this transaction
             --claim_address=<claim_address>: (str) address where the claim is sent to, if not specified
@@ -2884,13 +2909,21 @@ class Daemon(metaclass=JSONRPCServerType):
         Returns: {Transaction}
         """
         wallet = self.wallet_manager.get_wallet_or_default(wallet_id)
-        account = wallet.get_account_or_default(account_id)
         funding_accounts = wallet.get_accounts_or_all(funding_account_ids)
+        if account_id:
+            account = wallet.get_account_or_error(account_id)
+            accounts = [account]
+        else:
+            account = wallet.default_account
+            accounts = wallet.accounts
 
-        existing_claims = await account.get_claims(claim_id=claim_id)
+        existing_claims = await self.ledger.get_claims(
+            wallet=wallet, accounts=accounts, claim_id=claim_id
+        )
         if len(existing_claims) != 1:
+            account_ids = ', '.join(f"'{account.id}'" for account in accounts)
             raise Exception(
-                f"Can't find the claim '{claim_id}' in account '{account.id}'."
+                f"Can't find the stream '{claim_id}' in account(s) {account_ids}."
             )
         old_txo = existing_claims[0]
         if not old_txo.claim.is_stream:
@@ -2994,12 +3027,21 @@ class Daemon(metaclass=JSONRPCServerType):
         Returns: {Transaction}
         """
         wallet = self.wallet_manager.get_wallet_or_default(wallet_id)
-        account = wallet.get_account_or_default(account_id)
+        if account_id:
+            account = wallet.get_account_or_error(account_id)
+            accounts = [account]
+        else:
+            account = wallet.default_account
+            accounts = wallet.accounts
 
         if txid is not None and nout is not None:
-            claims = await account.get_claims(**{'txo.txid': txid, 'txo.position': nout})
+            claims = await self.ledger.get_claims(
+                wallet=wallet, accounts=accounts, **{'txo.txid': txid, 'txo.position': nout}
+            )
         elif claim_id is not None:
-            claims = await account.get_claims(claim_id=claim_id)
+            claims = await self.ledger.get_claims(
+                wallet=wallet, accounts=accounts, claim_id=claim_id
+            )
         else:
             raise Exception('Must specify claim_id, or txid and nout')
 
@@ -3007,14 +3049,14 @@ class Daemon(metaclass=JSONRPCServerType):
             raise Exception('No claim found for the specified claim_id or txid:nout')
 
         tx = await Transaction.create(
-            [Input.spend(txo) for txo in claims], [], [account], account
+            [Input.spend(txo) for txo in claims], [], accounts, account
         )
 
         if not preview:
             await self.broadcast_or_release(tx, blocking)
             await self.analytics_manager.send_claim_action('abandon')
         else:
-            await account.ledger.release_tx(tx)
+            await self.ledger.release_tx(tx)
 
         return tx
 
@@ -3638,8 +3680,7 @@ class Daemon(metaclass=JSONRPCServerType):
         """
         peer = None
         if node_id and address and port:
-            peer = self.component_manager.peer_manager.get_kademlia_peer(unhexlify(node_id), address,
-                                                                         udp_port=int(port))
+            peer = make_kademlia_peer(unhexlify(node_id), address, udp_port=int(port))
             try:
                 return await self.dht_node.protocol.get_rpc_peer(peer).ping()
             except asyncio.TimeoutError:
@@ -3719,7 +3760,7 @@ class Daemon(metaclass=JSONRPCServerType):
             --is_channel_signature_valid    : (bool) Only include comments with valid signatures.
                                               [Warning: Paginated total size will not change, even
                                                if list reduces]
-            --visible                       : (bool) Select only Visisble Comments
+            --visible                       : (bool) Select only Visible Comments
             --hidden                        : (bool) Select only Hidden Comments
 
         Returns:
